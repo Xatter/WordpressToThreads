@@ -39,6 +39,8 @@ class ThreadsAutoPoster {
         add_action('publish_post', array($this, 'auto_post_to_threads'), 10, 2);
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'admin_init'));
+        add_action('wp_ajax_threads_manual_post', array($this, 'handle_manual_post'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
     }
     
     public function activate() {
@@ -119,6 +121,11 @@ class ThreadsAutoPoster {
                 </table>
                 <?php submit_button(); ?>
             </form>
+            
+            <h2>Manual Post to Threads</h2>
+            <p>Select posts to manually post to Threads:</p>
+            
+            <?php $this->display_manual_post_section(); ?>
         </div>
         <?php
     }
@@ -342,6 +349,90 @@ class ThreadsAutoPoster {
         
         error_log('Threads Auto Poster: Failed to get access token - ' . $body);
         return false;
+    }
+    
+    public function enqueue_admin_scripts($hook) {
+        if ($hook !== 'settings_page_threads-auto-poster') {
+            return;
+        }
+        
+        wp_enqueue_script('threads-auto-poster-admin', THREADS_AUTO_POSTER_PLUGIN_URL . 'admin.js', array('jquery'), THREADS_AUTO_POSTER_VERSION, true);
+        wp_localize_script('threads-auto-poster-admin', 'threads_ajax', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('threads_manual_post_nonce')
+        ));
+    }
+    
+    public function display_manual_post_section() {
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'numberposts' => 20,
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+        
+        if (empty($posts)) {
+            echo '<p>No published posts found.</p>';
+            return;
+        }
+        
+        echo '<div id="threads-manual-posts">';
+        echo '<table class="wp-list-table widefat fixed striped">';
+        echo '<thead><tr><th>Post Title</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>';
+        echo '<tbody>';
+        
+        foreach ($posts as $post) {
+            $posted_status = get_post_meta($post->ID, '_threads_posted', true);
+            $threads_post_id = get_post_meta($post->ID, '_threads_post_id', true);
+            
+            echo '<tr>';
+            echo '<td><a href="' . get_edit_post_link($post->ID) . '">' . esc_html($post->post_title) . '</a></td>';
+            echo '<td>' . get_the_date('Y-m-d H:i', $post) . '</td>';
+            
+            if ($posted_status) {
+                echo '<td><span style="color: green;">✓ Posted</span>';
+                if ($threads_post_id) {
+                    echo '<br><small>ID: ' . esc_html($threads_post_id) . '</small>';
+                }
+                echo '</td>';
+                echo '<td><button class="button threads-repost-btn" data-post-id="' . $post->ID . '" disabled>Re-post</button></td>';
+            } else {
+                echo '<td><span style="color: orange;">Not posted</span></td>';
+                echo '<td><button class="button button-primary threads-post-btn" data-post-id="' . $post->ID . '">Post to Threads</button></td>';
+            }
+            
+            echo '</tr>';
+        }
+        
+        echo '</tbody></table>';
+        echo '<div id="threads-post-results"></div>';
+        echo '</div>';
+    }
+    
+    public function handle_manual_post() {
+        if (!wp_verify_nonce($_POST['nonce'], 'threads_manual_post_nonce')) {
+            wp_die('Security check failed');
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $post_id = intval($_POST['post_id']);
+        $post = get_post($post_id);
+        
+        if (!$post || $post->post_type !== 'post') {
+            wp_send_json_error('Invalid post');
+        }
+        
+        $result = $this->post_to_threads($post);
+        
+        if ($result) {
+            wp_send_json_success('Post successfully shared to Threads!');
+        } else {
+            wp_send_json_error('Failed to post to Threads. Check error logs.');
+        }
     }
 }
 
