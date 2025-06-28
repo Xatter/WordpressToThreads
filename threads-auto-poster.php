@@ -126,15 +126,24 @@ class ThreadsAutoPoster {
                         <td>
                             <?php
                             $access_token = get_option('threads_access_token');
+                            $token_expires = get_option('threads_token_expires');
                             $app_id = get_option('threads_app_id');
                             $app_secret = get_option('threads_app_secret');
                             
                             if ($access_token) {
-                                echo '<span style="color: green;">✓ Authorized</span><br>';
+                                if (!empty($token_expires) && $this->is_token_expired()) {
+                                    echo '<span style="color: orange;">⚠ Token expires soon - will auto-refresh</span><br>';
+                                } else {
+                                    echo '<span style="color: green;">✓ Authorized</span><br>';
+                                }
                                 echo '<a href="' . $this->get_deauthorize_url() . '" class="button">Deauthorize</a>';
                             } elseif (empty($app_id) || empty($app_secret)) {
                                 echo '<span style="color: red;">⚠ Please save your App ID and App Secret first</span>';
                             } else {
+                                // Check if we recently cleared expired credentials
+                                if (!empty($token_expires) && time() > $token_expires) {
+                                    echo '<span style="color: red;">⚠ Your token has expired. Please re-authorize.</span><br>';
+                                }
                                 echo '<a href="' . $this->get_authorize_url() . '" class="button button-primary">Authorize with Threads</a>';
                             }
                             ?>
@@ -879,24 +888,17 @@ class ThreadsAutoPoster {
             return false;
         }
         
-        $api_url = 'https://graph.threads.net/refresh_access_token';
-        
-        $data = array(
+        $api_url = 'https://graph.threads.net/refresh_access_token?' . http_build_query(array(
             'grant_type' => 'th_refresh_token',
             'access_token' => $current_token
-        );
+        ));
         
         $args = array(
-            'headers' => array(
-                'Content-Type' => 'application/x-www-form-urlencoded'
-            ),
-            'body' => http_build_query($data),
-            'method' => 'POST',
             'timeout' => 30
         );
         
         error_log('Threads Auto Poster: Attempting to refresh access token');
-        $response = wp_remote_post($api_url, $args);
+        $response = wp_remote_get($api_url, $args);
         
         if (is_wp_error($response)) {
             error_log('Threads Auto Poster: Token refresh error - ' . $response->get_error_message());
@@ -922,8 +924,21 @@ class ThreadsAutoPoster {
             return $new_token;
         }
         
+        // Check if token has expired completely and needs re-authorization
+        if (isset($token_data['error']['code']) && $token_data['error']['code'] == 190) {
+            error_log('Threads Auto Poster: Access token has expired, clearing credentials to force re-authorization');
+            $this->clear_authentication_data();
+        }
+        
         error_log('Threads Auto Poster: Token refresh failed - ' . $body);
         return false;
+    }
+    
+    private function clear_authentication_data() {
+        delete_option('threads_access_token');
+        delete_option('threads_token_expires');
+        // Keep threads_user_id - it doesn't change between authorizations
+        error_log('Threads Auto Poster: Expired token cleared, user ID preserved');
     }
     
     private function is_token_expired() {
@@ -940,12 +955,27 @@ class ThreadsAutoPoster {
     }
     
     private function ensure_valid_token() {
-        if ($this->is_token_expired()) {
-            error_log('Threads Auto Poster: Token is expired or expiring soon, attempting refresh');
-            return $this->refresh_access_token();
+        // First check if we have any token at all
+        $current_token = get_option('threads_access_token');
+        if (empty($current_token)) {
+            error_log('Threads Auto Poster: No access token available');
+            return false;
         }
         
-        return get_option('threads_access_token');
+        if ($this->is_token_expired()) {
+            error_log('Threads Auto Poster: Token is expired or expiring soon, attempting refresh');
+            $new_token = $this->refresh_access_token();
+            
+            // If refresh failed and credentials were cleared, return false
+            if (!$new_token && empty(get_option('threads_access_token'))) {
+                error_log('Threads Auto Poster: Token refresh failed and credentials cleared');
+                return false;
+            }
+            
+            return $new_token;
+        }
+        
+        return $current_token;
     }
     
     private function make_authenticated_request($url, $args, $retry_count = 0) {
