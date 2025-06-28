@@ -1,5 +1,5 @@
 jQuery(document).ready(function($) {
-    console.log('Threads Auto Poster admin script loaded');
+    console.log('Wordpress to Threads admin script loaded');
     console.log('threads_ajax object:', threads_ajax);
     
     $('.threads-post-btn').on('click', function(e) {

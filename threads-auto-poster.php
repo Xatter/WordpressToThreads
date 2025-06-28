@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: Threads Auto Poster
+ * Plugin Name: Wordpress to Threads
  * Plugin URI: https://extroverteddeveloper.com
- * Description: Automatically posts blog posts to Threads with character limit handling and URL shortening for long posts.
+ * Description: Automatically posts WordPress blog posts to Meta's Threads platform with character limit handling and URL shortening.
  * Version: 1.0.0
  * Author: ExtrovertedDeveloper
  * License: GPL v2 or later
@@ -13,9 +13,9 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('THREADS_AUTO_POSTER_VERSION', '1.0.0');
-define('THREADS_AUTO_POSTER_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('THREADS_AUTO_POSTER_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('WORDPRESS_TO_THREADS_VERSION', '1.0.0');
+define('WORDPRESS_TO_THREADS_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('WORDPRESS_TO_THREADS_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 class ThreadsAutoPoster {
     
@@ -63,8 +63,8 @@ class ThreadsAutoPoster {
     
     public function add_admin_menu() {
         add_options_page(
-            'Threads Auto Poster Settings',
-            'Threads Auto Poster',
+            'Wordpress to Threads Settings',
+            'Wordpress to Threads',
             'manage_options',
             'threads-auto-poster',
             array($this, 'admin_page')
@@ -86,7 +86,7 @@ class ThreadsAutoPoster {
     public function admin_page() {
         ?>
         <div class="wrap">
-            <h1>Threads Auto Poster Settings</h1>
+            <h1>Wordpress to Threads Settings</h1>
             <form method="post" action="options.php">
                 <?php
                 settings_fields('threads_auto_poster_settings');
@@ -532,7 +532,7 @@ class ThreadsAutoPoster {
             return;
         }
         
-        wp_enqueue_script('threads-auto-poster-admin', THREADS_AUTO_POSTER_PLUGIN_URL . 'admin.js', array('jquery'), THREADS_AUTO_POSTER_VERSION, true);
+        wp_enqueue_script('threads-auto-poster-admin', WORDPRESS_TO_THREADS_PLUGIN_URL . 'admin.js', array('jquery'), THREADS_AUTO_POSTER_VERSION, true);
         wp_localize_script('threads-auto-poster-admin', 'threads_ajax', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('threads_manual_post_nonce')
