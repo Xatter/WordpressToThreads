@@ -528,12 +528,12 @@ class ThreadsAutoPoster {
     
     
     public function enqueue_admin_scripts($hook) {
-        if ($hook !== 'settings_page_threads-auto-poster') {
+        if ($hook !== 'settings_page_wordpress-to-threads') {
             return;
         }
         
         wp_enqueue_script('wordpress-to-threads-admin', WORDPRESS_TO_THREADS_PLUGIN_URL . 'admin.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
-        wp_localize_script('threads-auto-poster-admin', 'threads_ajax', array(
+        wp_localize_script('wordpress-to-threads-admin', 'threads_ajax', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('threads_manual_post_nonce')
         ));
@@ -756,10 +756,10 @@ class ThreadsAutoPoster {
             }
             
             error_log('Threads OAuth Debug: Redirecting to settings with success');
-            wp_redirect(admin_url('options-general.php?page=threads-auto-poster&authorized=1'));
+            wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&authorized=1'));
         } else {
             error_log('Threads OAuth Debug: Token exchange failed, redirecting with error');
-            wp_redirect(admin_url('options-general.php?page=threads-auto-poster&error=1'));
+            wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&error=1'));
         }
         exit;
     }
@@ -774,7 +774,7 @@ class ThreadsAutoPoster {
         delete_option('threads_token_expires');
         delete_transient('threads_access_token');
         
-        wp_redirect(admin_url('options-general.php?page=threads-auto-poster&deauthorized=1'));
+        wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&deauthorized=1'));
         exit;
     }
     
