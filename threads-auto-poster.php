@@ -41,6 +41,7 @@ class ThreadsAutoPoster {
         add_action('admin_init', array($this, 'admin_init'));
         add_action('wp_ajax_threads_manual_post', array($this, 'handle_manual_post'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+        add_action('threads_refresh_token', array($this, 'refresh_access_token'));
         $this->handle_oauth_endpoints();
     }
     
@@ -54,11 +55,14 @@ class ThreadsAutoPoster {
         add_option('threads_include_media', '1');
         add_option('threads_media_priority', 'featured');
         add_option('threads_token_expires', '');
+        if (!wp_next_scheduled('threads_refresh_token')) {
+            wp_schedule_event(time(), 'twicedaily', 'threads_refresh_token');
+        }
         flush_rewrite_rules();
     }
     
     public function deactivate() {
-        // Clean up if needed
+        wp_clear_scheduled_hook('threads_refresh_token');
     }
     
     public function add_admin_menu() {
@@ -889,11 +893,11 @@ class ThreadsAutoPoster {
         return json_decode($body, true);
     }
     
-    private function refresh_access_token() {
+    public function refresh_access_token() {
         $current_token = get_option('threads_access_token');
         
         if (empty($current_token)) {
-            error_log('Threads Auto Poster: No access token to refresh');
+            error_log('Threads Auto Poster: No access token to refresh via cron');
             return false;
         }
         
@@ -906,19 +910,19 @@ class ThreadsAutoPoster {
             'timeout' => 30
         );
         
-        error_log('Threads Auto Poster: Attempting to refresh access token');
+        error_log('Threads Auto Poster: Cron token refresh triggered');
         $response = wp_remote_get($api_url, $args);
         
         if (is_wp_error($response)) {
-            error_log('Threads Auto Poster: Token refresh error - ' . $response->get_error_message());
+            error_log('Threads Auto Poster: Cron token refresh error - ' . $response->get_error_message());
             return false;
         }
         
         $response_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
         
-        error_log('Threads Auto Poster: Token refresh response code: ' . $response_code);
-        error_log('Threads Auto Poster: Token refresh response body: ' . $body);
+        error_log('Threads Auto Poster: Cron token refresh response code: ' . $response_code);
+        error_log('Threads Auto Poster: Cron token refresh response body: ' . $body);
         
         $token_data = json_decode($body, true);
         
@@ -929,17 +933,17 @@ class ThreadsAutoPoster {
             update_option('threads_access_token', $new_token);
             update_option('threads_token_expires', time() + $expires_in);
             
-            error_log('Threads Auto Poster: Token refreshed successfully');
+            error_log('Threads Auto Poster: Cron token refresh successful');
             return $new_token;
         }
         
         // Check if token has expired completely and needs re-authorization
         if (isset($token_data['error']['code']) && $token_data['error']['code'] == 190) {
-            error_log('Threads Auto Poster: Access token has expired, clearing credentials to force re-authorization');
+            error_log('Threads Auto Poster: Access token has expired via cron, clearing credentials to force re-authorization');
             $this->clear_authentication_data();
         }
         
-        error_log('Threads Auto Poster: Token refresh failed - ' . $body);
+        error_log('Threads Auto Poster: Cron token refresh failed - ' . $body);
         return false;
     }
     
