@@ -51,6 +51,8 @@ class ThreadsAutoPoster {
         add_option('threads_access_token', '');
         add_option('bitly_access_token', '');
         add_option('threads_auto_post_enabled', '1');
+        add_option('threads_include_media', '1');
+        add_option('threads_media_priority', 'featured');
         flush_rewrite_rules();
     }
     
@@ -75,6 +77,8 @@ class ThreadsAutoPoster {
         register_setting('threads_auto_poster_settings', 'threads_access_token');
         register_setting('threads_auto_poster_settings', 'bitly_access_token');
         register_setting('threads_auto_poster_settings', 'threads_auto_post_enabled');
+        register_setting('threads_auto_poster_settings', 'threads_include_media');
+        register_setting('threads_auto_poster_settings', 'threads_media_priority');
     }
     
     public function admin_page() {
@@ -142,6 +146,24 @@ class ThreadsAutoPoster {
                             <p class="description">Your Bitly API access token for URL shortening.</p>
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row">Include Media</th>
+                        <td>
+                            <input type="checkbox" name="threads_include_media" value="1" <?php checked(get_option('threads_include_media', '1'), '1'); ?> />
+                            <p class="description">Include images and videos from posts when posting to Threads.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Media Priority</th>
+                        <td>
+                            <select name="threads_media_priority">
+                                <option value="featured" <?php selected(get_option('threads_media_priority', 'featured'), 'featured'); ?>>Featured Image First</option>
+                                <option value="content" <?php selected(get_option('threads_media_priority', 'featured'), 'content'); ?>>Content Images First</option>
+                                <option value="video" <?php selected(get_option('threads_media_priority', 'featured'), 'video'); ?>>Videos First</option>
+                            </select>
+                            <p class="description">Choose which media to prioritize when multiple options are available.</p>
+                        </td>
+                    </tr>
                 </table>
                 <?php submit_button(); ?>
             </form>
@@ -186,10 +208,33 @@ class ThreadsAutoPoster {
             return false;
         }
         
-        $threads_post_data = array(
-            'media_type' => 'TEXT',
-            'text' => $post_content
-        );
+        // Check for media in the post (if enabled)
+        $media_info = null;
+        if (get_option('threads_include_media', '1') === '1') {
+            $media_info = $this->extract_post_media($post);
+        }
+        
+        if ($media_info && !empty($media_info['url'])) {
+            $threads_post_data = array(
+                'media_type' => $media_info['type'],
+                'text' => $post_content
+            );
+            
+            if ($media_info['type'] === 'IMAGE') {
+                $threads_post_data['image_url'] = $media_info['url'];
+            } elseif ($media_info['type'] === 'VIDEO') {
+                $threads_post_data['video_url'] = $media_info['url'];
+            }
+            
+            error_log('Threads Auto Poster: Posting with media - Type: ' . $media_info['type'] . ', URL: ' . $media_info['url']);
+        } else {
+            $threads_post_data = array(
+                'media_type' => 'TEXT',
+                'text' => $post_content
+            );
+            
+            error_log('Threads Auto Poster: Posting text-only content');
+        }
         
         $container_response = $this->create_threads_container($user_id, $threads_post_data, $access_token);
         
@@ -263,7 +308,8 @@ class ThreadsAutoPoster {
                 'Content-Type' => 'application/json'
             ),
             'body' => json_encode($data),
-            'method' => 'POST'
+            'method' => 'POST',
+            'timeout' => 30
         );
         
         $response = wp_remote_post($api_url, $args);
@@ -283,6 +329,126 @@ class ThreadsAutoPoster {
         return false;
     }
     
+    private function extract_post_media($post) {
+        $media_priority = get_option('threads_media_priority', 'featured');
+        
+        // Collect all available media
+        $featured_image = null;
+        $content_images = array();
+        $videos = array();
+        
+        // Get featured image
+        $thumbnail_id = get_post_thumbnail_id($post->ID);
+        if ($thumbnail_id) {
+            $image_url = wp_get_attachment_image_url($thumbnail_id, 'large');
+            if ($image_url && $this->is_valid_image_url($image_url)) {
+                $featured_image = array(
+                    'type' => 'IMAGE',
+                    'url' => $image_url,
+                    'id' => $thumbnail_id
+                );
+            }
+        }
+        
+        // Get images from post content
+        preg_match_all('/<img[^>]+src="([^"]+)"[^>]*>/i', $post->post_content, $matches);
+        if (!empty($matches[1])) {
+            foreach ($matches[1] as $img_url) {
+                if ($this->is_valid_image_url($img_url)) {
+                    $content_images[] = array(
+                        'type' => 'IMAGE',
+                        'url' => $img_url,
+                        'id' => null
+                    );
+                }
+            }
+        }
+        
+        // Get videos from shortcodes
+        if (has_shortcode($post->post_content, 'video')) {
+            preg_match('/\[video[^\]]*src="([^"]+)"[^\]]*\]/i', $post->post_content, $video_match);
+            if (!empty($video_match[1]) && $this->is_valid_video_url($video_match[1])) {
+                $videos[] = array(
+                    'type' => 'VIDEO',
+                    'url' => $video_match[1],
+                    'id' => null
+                );
+            }
+        }
+        
+        // Get videos from HTML tags
+        preg_match_all('/<video[^>]+src="([^"]+)"[^>]*>/i', $post->post_content, $video_matches);
+        if (!empty($video_matches[1])) {
+            foreach ($video_matches[1] as $video_url) {
+                if ($this->is_valid_video_url($video_url)) {
+                    $videos[] = array(
+                        'type' => 'VIDEO',
+                        'url' => $video_url,
+                        'id' => null
+                    );
+                }
+            }
+        }
+        
+        // Return media based on priority
+        switch ($media_priority) {
+            case 'video':
+                if (!empty($videos)) return $videos[0];
+                if ($featured_image) return $featured_image;
+                if (!empty($content_images)) return $content_images[0];
+                break;
+                
+            case 'content':
+                if (!empty($content_images)) return $content_images[0];
+                if ($featured_image) return $featured_image;
+                if (!empty($videos)) return $videos[0];
+                break;
+                
+            case 'featured':
+            default:
+                if ($featured_image) return $featured_image;
+                if (!empty($content_images)) return $content_images[0];
+                if (!empty($videos)) return $videos[0];
+                break;
+        }
+        
+        return null;
+    }
+    
+    private function is_valid_image_url($url) {
+        $valid_extensions = array('jpg', 'jpeg', 'png', 'gif', 'webp');
+        $extension = strtolower(pathinfo(parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION));
+        
+        // Check file extension
+        if (!in_array($extension, $valid_extensions)) {
+            return false;
+        }
+        
+        // Ensure it's a publicly accessible URL
+        if (strpos($url, 'http://') !== 0 && strpos($url, 'https://') !== 0) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    private function is_valid_video_url($url) {
+        $valid_extensions = array('mp4', 'mov', 'avi', 'webm');
+        $extension = strtolower(pathinfo(parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION));
+        
+        // Check file extension
+        if (!in_array($extension, $valid_extensions)) {
+            return false;
+        }
+        
+        // Ensure it's a publicly accessible URL
+        if (strpos($url, 'http://') !== 0 && strpos($url, 'https://') !== 0) {
+            return false;
+        }
+        
+        return true;
+    }
+    
     private function create_threads_container($user_id, $post_data, $access_token) {
         $api_url = "https://graph.threads.net/v1.0/{$user_id}/threads";
         
@@ -292,7 +458,8 @@ class ThreadsAutoPoster {
                 'Content-Type' => 'application/json'
             ),
             'body' => json_encode($post_data),
-            'method' => 'POST'
+            'method' => 'POST',
+            'timeout' => 30
         );
         
         $response = wp_remote_post($api_url, $args);
@@ -319,7 +486,8 @@ class ThreadsAutoPoster {
                 'Content-Type' => 'application/json'
             ),
             'body' => json_encode($data),
-            'method' => 'POST'
+            'method' => 'POST',
+            'timeout' => 30
         );
         
         $response = wp_remote_post($api_url, $args);
