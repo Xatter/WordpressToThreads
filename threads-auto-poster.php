@@ -66,21 +66,21 @@ class ThreadsAutoPoster {
             'Wordpress to Threads Settings',
             'Wordpress to Threads',
             'manage_options',
-            'threads-auto-poster',
+            'wordpress-to-threads',
             array($this, 'admin_page')
         );
     }
     
     public function admin_init() {
-        register_setting('threads_auto_poster_settings', 'threads_app_id');
-        register_setting('threads_auto_poster_settings', 'threads_app_secret');
-        register_setting('threads_auto_poster_settings', 'threads_user_id');
-        register_setting('threads_auto_poster_settings', 'threads_access_token');
-        register_setting('threads_auto_poster_settings', 'bitly_access_token');
-        register_setting('threads_auto_poster_settings', 'threads_auto_post_enabled');
-        register_setting('threads_auto_poster_settings', 'threads_include_media');
-        register_setting('threads_auto_poster_settings', 'threads_media_priority');
-        register_setting('threads_auto_poster_settings', 'threads_token_expires');
+        register_setting('wordpress_to_threads_settings', 'threads_app_id');
+        register_setting('wordpress_to_threads_settings', 'threads_app_secret');
+        register_setting('wordpress_to_threads_settings', 'threads_user_id');
+        register_setting('wordpress_to_threads_settings', 'threads_access_token');
+        register_setting('wordpress_to_threads_settings', 'bitly_access_token');
+        register_setting('wordpress_to_threads_settings', 'threads_auto_post_enabled');
+        register_setting('wordpress_to_threads_settings', 'threads_include_media');
+        register_setting('wordpress_to_threads_settings', 'threads_media_priority');
+        register_setting('wordpress_to_threads_settings', 'threads_token_expires');
     }
     
     public function admin_page() {
@@ -89,8 +89,8 @@ class ThreadsAutoPoster {
             <h1>Wordpress to Threads Settings</h1>
             <form method="post" action="options.php">
                 <?php
-                settings_fields('threads_auto_poster_settings');
-                do_settings_sections('threads_auto_poster_settings');
+                settings_fields('wordpress_to_threads_settings');
+                do_settings_sections('wordpress_to_threads_settings');
                 ?>
                 <table class="form-table">
                     <tr>
@@ -532,7 +532,7 @@ class ThreadsAutoPoster {
             return;
         }
         
-        wp_enqueue_script('threads-auto-poster-admin', WORDPRESS_TO_THREADS_PLUGIN_URL . 'admin.js', array('jquery'), THREADS_AUTO_POSTER_VERSION, true);
+        wp_enqueue_script('wordpress-to-threads-admin', WORDPRESS_TO_THREADS_PLUGIN_URL . 'admin.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
         wp_localize_script('threads-auto-poster-admin', 'threads_ajax', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('threads_manual_post_nonce')
