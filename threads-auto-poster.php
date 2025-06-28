@@ -117,8 +117,8 @@ class ThreadsAutoPoster {
                     <tr>
                         <th scope="row">Threads User ID</th>
                         <td>
-                            <input type="text" name="threads_user_id" value="<?php echo esc_attr(get_option('threads_user_id')); ?>" class="regular-text" />
-                            <p class="description">Your Threads user ID (numeric identifier, not username).</p>
+                            <div style="padding: 6px 8px; background-color: #f1f1f1; border: 1px solid #ddd; border-radius: 3px; display: inline-block; min-width: 200px;"><?php echo esc_html(get_option('threads_user_id') ?: 'Not set - authorize to retrieve'); ?></div>
+                            <p class="description">Your Threads user ID (retrieved automatically from OAuth).</p>
                         </td>
                     </tr>
                     <tr>
@@ -563,7 +563,16 @@ class ThreadsAutoPoster {
             $threads_post_id = get_post_meta($post->ID, '_threads_post_id', true);
             
             echo '<tr>';
-            echo '<td><a href="' . get_edit_post_link($post->ID) . '">' . esc_html($post->post_title) . '</a></td>';
+            $display_title = $post->post_title;
+            if (empty($display_title)) {
+                $content = wp_strip_all_tags($post->post_content);
+                if (strlen($content) > 20) {
+                    $display_title = substr($content, 0, 20) . '...';
+                } else {
+                    $display_title = $content;
+                }
+            }
+            echo '<td><a href="' . get_edit_post_link($post->ID) . '">' . esc_html($display_title) . '</a></td>';
             echo '<td>' . get_the_date('Y-m-d H:i', $post) . '</td>';
             
             if ($posted_status) {
