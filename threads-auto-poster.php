@@ -41,14 +41,17 @@ class ThreadsAutoPoster {
         add_action('admin_init', array($this, 'admin_init'));
         add_action('wp_ajax_threads_manual_post', array($this, 'handle_manual_post'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+        $this->handle_oauth_endpoints();
     }
     
     public function activate() {
         add_option('threads_app_id', '');
         add_option('threads_app_secret', '');
         add_option('threads_user_id', '');
+        add_option('threads_access_token', '');
         add_option('bitly_access_token', '');
         add_option('threads_auto_post_enabled', '1');
+        flush_rewrite_rules();
     }
     
     public function deactivate() {
@@ -69,6 +72,7 @@ class ThreadsAutoPoster {
         register_setting('threads_auto_poster_settings', 'threads_app_id');
         register_setting('threads_auto_poster_settings', 'threads_app_secret');
         register_setting('threads_auto_poster_settings', 'threads_user_id');
+        register_setting('threads_auto_poster_settings', 'threads_access_token');
         register_setting('threads_auto_poster_settings', 'bitly_access_token');
         register_setting('threads_auto_poster_settings', 'threads_auto_post_enabled');
     }
@@ -108,7 +112,27 @@ class ThreadsAutoPoster {
                         <th scope="row">Threads User ID</th>
                         <td>
                             <input type="text" name="threads_user_id" value="<?php echo esc_attr(get_option('threads_user_id')); ?>" class="regular-text" />
-                            <p class="description">Your Threads user ID.</p>
+                            <p class="description">Your Threads user ID (numeric identifier, not username).</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">OAuth Authorization</th>
+                        <td>
+                            <?php
+                            $access_token = get_option('threads_access_token');
+                            $app_id = get_option('threads_app_id');
+                            $app_secret = get_option('threads_app_secret');
+                            
+                            if ($access_token) {
+                                echo '<span style="color: green;">✓ Authorized</span><br>';
+                                echo '<a href="' . $this->get_deauthorize_url() . '" class="button">Deauthorize</a>';
+                            } elseif (empty($app_id) || empty($app_secret)) {
+                                echo '<span style="color: red;">⚠ Please save your App ID and App Secret first</span>';
+                            } else {
+                                echo '<a href="' . $this->get_authorize_url() . '" class="button button-primary">Authorize with Threads</a>';
+                            }
+                            ?>
+                            <p class="description">Authorize this plugin to post to your Threads account.</p>
                         </td>
                     </tr>
                     <tr>
@@ -147,18 +171,11 @@ class ThreadsAutoPoster {
     }
     
     public function post_to_threads($post) {
-        $app_id = get_option('threads_app_id');
-        $app_secret = get_option('threads_app_secret');
+        $access_token = get_option('threads_access_token');
         $user_id = get_option('threads_user_id');
         
-        if (empty($app_id) || empty($app_secret) || empty($user_id)) {
-            error_log('Threads Auto Poster: Missing app credentials or user ID');
-            return false;
-        }
-        
-        $access_token = $this->get_access_token($app_id, $app_secret);
-        if (!$access_token) {
-            error_log('Threads Auto Poster: Failed to get access token');
+        if (empty($access_token) || empty($user_id)) {
+            error_log('Threads Auto Poster: Missing access token or user ID. Please authorize the plugin.');
             return false;
         }
         
@@ -177,18 +194,25 @@ class ThreadsAutoPoster {
         $container_response = $this->create_threads_container($user_id, $threads_post_data, $access_token);
         
         if (!$container_response || !isset($container_response['id'])) {
-            error_log('Threads Auto Poster: Failed to create container');
+            error_log('Threads Auto Poster: Failed to create container. Response: ' . print_r($container_response, true));
             return false;
         }
         
+        error_log('Threads Auto Poster: Container created successfully. ID: ' . $container_response['id']);
+        
         $publish_response = $this->publish_threads_container($user_id, $container_response['id'], $access_token);
         
+        error_log('Threads Auto Poster: Publish response: ' . print_r($publish_response, true));
+        
         if ($publish_response && isset($publish_response['id'])) {
+            error_log('Threads Auto Poster: Post successful, updating meta for post ID: ' . $post->ID);
             update_post_meta($post->ID, '_threads_posted', '1');
             update_post_meta($post->ID, '_threads_post_id', $publish_response['id']);
+            error_log('Threads Auto Poster: Meta updated. Posted status: ' . get_post_meta($post->ID, '_threads_posted', true));
             return true;
         }
         
+        error_log('Threads Auto Poster: Publish failed or missing ID in response');
         return false;
     }
     
@@ -302,54 +326,30 @@ class ThreadsAutoPoster {
         
         if (is_wp_error($response)) {
             error_log('Threads Auto Poster: Publish API error - ' . $response->get_error_message());
+            error_log('Threads Auto Poster: Response body - ' . wp_remote_retrieve_body($response));
+            error_log('Threads Auto Poster: Response code - ' . wp_remote_retrieve_response_code($response));
+            error_log('Threads Auto Poster: Request args - ' . print_r($args, true));
+            error_log('Threads Auto Poster: Request URL - ' . $api_url);
+            error_log('Threads Auto Poster: Access token - ' . $access_token);
+            error_log('Threads Auto Poster: User ID - ' . $user_id);
+            error_log('Threads Auto Poster: Container ID - ' . $container_id);
             return false;
         }
         
+        $response_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
-        return json_decode($body, true);
+        $headers = wp_remote_retrieve_headers($response);
+        
+        error_log('Threads Auto Poster: Publish HTTP response code: ' . $response_code);
+        error_log('Threads Auto Poster: Publish raw response body: ' . $body);
+        error_log('Threads Auto Poster: Publish response headers: ' . print_r($headers, true));
+        
+        $decoded_response = json_decode($body, true);
+        error_log('Threads Auto Poster: Publish decoded response: ' . print_r($decoded_response, true));
+        
+        return $decoded_response;
     }
     
-    private function get_access_token($app_id, $app_secret) {
-        $cached_token = get_transient('threads_access_token');
-        if ($cached_token) {
-            return $cached_token;
-        }
-        
-        $api_url = 'https://graph.threads.net/oauth/access_token';
-        
-        $data = array(
-            'client_id' => $app_id,
-            'client_secret' => $app_secret,
-            'grant_type' => 'client_credentials'
-        );
-        
-        $args = array(
-            'headers' => array(
-                'Content-Type' => 'application/x-www-form-urlencoded'
-            ),
-            'body' => http_build_query($data),
-            'method' => 'POST'
-        );
-        
-        $response = wp_remote_post($api_url, $args);
-        
-        if (is_wp_error($response)) {
-            error_log('Threads Auto Poster: OAuth error - ' . $response->get_error_message());
-            return false;
-        }
-        
-        $body = wp_remote_retrieve_body($response);
-        $token_data = json_decode($body, true);
-        
-        if (isset($token_data['access_token'])) {
-            $expires_in = isset($token_data['expires_in']) ? $token_data['expires_in'] : 3600;
-            set_transient('threads_access_token', $token_data['access_token'], $expires_in - 300);
-            return $token_data['access_token'];
-        }
-        
-        error_log('Threads Auto Poster: Failed to get access token - ' . $body);
-        return false;
-    }
     
     public function enqueue_admin_scripts($hook) {
         if ($hook !== 'settings_page_threads-auto-poster') {
@@ -411,28 +411,330 @@ class ThreadsAutoPoster {
     }
     
     public function handle_manual_post() {
-        if (!wp_verify_nonce($_POST['nonce'], 'threads_manual_post_nonce')) {
-            wp_die('Security check failed');
+        error_log('Threads Auto Poster: handle_manual_post called');
+        error_log('Threads Auto Poster: POST data: ' . print_r($_POST, true));
+        
+        if (!isset($_POST['nonce'])) {
+            error_log('Threads Auto Poster: No nonce provided');
+            wp_send_json_error('No security token provided');
+            return;
         }
         
+        if (!wp_verify_nonce($_POST['nonce'], 'threads_manual_post_nonce')) {
+            error_log('Threads Auto Poster: Nonce verification failed');
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        if (!current_user_can('manage_options')) {
+            error_log('Threads Auto Poster: User lacks permissions');
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        if (!isset($_POST['post_id'])) {
+            error_log('Threads Auto Poster: No post_id provided');
+            wp_send_json_error('No post ID provided');
+            return;
+        }
+        
+        $post_id = intval($_POST['post_id']);
+        error_log('Threads Auto Poster: Processing post ID: ' . $post_id);
+        
+        $post = get_post($post_id);
+        
+        if (!$post || $post->post_type !== 'post') {
+            error_log('Threads Auto Poster: Invalid post or post type');
+            wp_send_json_error('Invalid post');
+            return;
+        }
+        
+        // Check if already posted
+        if (get_post_meta($post_id, '_threads_posted', true)) {
+            error_log('Threads Auto Poster: Post already shared to Threads');
+            wp_send_json_error('This post has already been shared to Threads');
+            return;
+        }
+        
+        // Check authentication
+        $access_token = get_option('threads_access_token');
+        $user_id = get_option('threads_user_id');
+        
+        if (empty($access_token) || empty($user_id)) {
+            error_log('Threads Auto Poster: Missing authentication credentials');
+            wp_send_json_error('Plugin not properly authorized. Please re-authorize in settings.');
+            return;
+        }
+        
+        error_log('Threads Auto Poster: Attempting to post to Threads');
+        $result = $this->post_to_threads($post);
+        
+        if ($result) {
+            error_log('Threads Auto Poster: Successfully posted to Threads');
+            wp_send_json_success('Post successfully shared to Threads!');
+        } else {
+            error_log('Threads Auto Poster: Failed to post to Threads');
+            wp_send_json_error('Failed to post to Threads. Check error logs for details.');
+        }
+    }
+    
+    public function handle_oauth_endpoints() {
+        error_log('Threads OAuth Debug: handle_oauth_endpoints called. GET params: ' . print_r($_GET, true));
+        if (isset($_GET['threads_oauth_action'])) {
+            error_log('Threads OAuth Debug: Found threads_oauth_action = ' . $_GET['threads_oauth_action']);
+            switch ($_GET['threads_oauth_action']) {
+                case 'redirect':
+                    error_log('Threads OAuth Debug: Calling handle_oauth_redirect');
+                    $this->handle_oauth_redirect();
+                    break;
+                case 'deauthorize':
+                    $this->handle_deauthorize();
+                    break;
+                case 'data_deletion':
+                    $this->handle_data_deletion();
+                    break;
+            }
+        } else {
+            error_log('Threads OAuth Debug: No threads_oauth_action found in GET params');
+        }
+    }
+    
+    public function get_authorize_url() {
+        $app_id = get_option('threads_app_id');
+        
+        if (empty($app_id)) {
+            return '#';
+        }
+        
+        $redirect_uri = $this->get_redirect_uri();
+        $state = wp_create_nonce('threads_oauth_state');
+        
+        set_transient('threads_oauth_state', $state, 600); // 10 minutes
+        
+        $params = array(
+            'client_id' => $app_id,
+            'redirect_uri' => $redirect_uri,
+            'scope' => 'threads_basic,threads_content_publish',
+            'response_type' => 'code',
+            'state' => $state
+        );
+        
+        return 'https://threads.net/oauth/authorize?' . http_build_query($params);
+    }
+    
+    public function get_deauthorize_url() {
+        return add_query_arg('threads_oauth_action', 'deauthorize', home_url());
+    }
+    
+    public function get_redirect_uri() {
+        return add_query_arg('threads_oauth_action', 'redirect', home_url());
+    }
+    
+    public function handle_oauth_redirect() {
+        error_log('Threads OAuth Debug: handle_oauth_redirect called');
+        if (!isset($_GET['code']) || !isset($_GET['state'])) {
+            error_log('Threads OAuth Debug: Missing code or state parameters');
+            wp_die('Invalid OAuth response');
+        }
+        
+        error_log('Threads OAuth Debug: Code and state parameters found');
+        $state = sanitize_text_field($_GET['state']);
+        $stored_state = get_transient('threads_oauth_state');
+        
+        error_log('Threads OAuth Debug: Received state = ' . $state);
+        error_log('Threads OAuth Debug: Stored state = ' . ($stored_state ?: 'EMPTY'));
+        
+        if (!$stored_state || $state !== $stored_state) {
+            error_log('Threads OAuth Debug: State validation failed');
+            wp_die('Invalid OAuth state');
+        }
+        
+        error_log('Threads OAuth Debug: State validation passed');
+        delete_transient('threads_oauth_state');
+        
+        $code = sanitize_text_field($_GET['code']);
+        error_log('Threads OAuth Debug: Exchanging code for token');
+        $access_token = $this->exchange_code_for_token($code);
+        
+        if ($access_token) {
+            error_log('Threads OAuth Debug: Got access token, updating options');
+            update_option('threads_access_token', $access_token);
+            
+            $user_data = $this->get_user_data($access_token);
+            if ($user_data && isset($user_data['id'])) {
+                update_option('threads_user_id', $user_data['id']);
+                error_log('Threads OAuth Debug: Updated user ID');
+            }
+            
+            error_log('Threads OAuth Debug: Redirecting to settings with success');
+            wp_redirect(admin_url('options-general.php?page=threads-auto-poster&authorized=1'));
+        } else {
+            error_log('Threads OAuth Debug: Token exchange failed, redirecting with error');
+            wp_redirect(admin_url('options-general.php?page=threads-auto-poster&error=1'));
+        }
+        exit;
+    }
+    
+    public function handle_deauthorize() {
         if (!current_user_can('manage_options')) {
             wp_die('Insufficient permissions');
         }
         
-        $post_id = intval($_POST['post_id']);
-        $post = get_post($post_id);
+        delete_option('threads_access_token');
+        delete_option('threads_user_id');
+        delete_transient('threads_access_token');
         
-        if (!$post || $post->post_type !== 'post') {
-            wp_send_json_error('Invalid post');
+        wp_redirect(admin_url('options-general.php?page=threads-auto-poster&deauthorized=1'));
+        exit;
+    }
+    
+    public function handle_data_deletion() {
+        $signed_request = isset($_POST['signed_request']) ? $_POST['signed_request'] : '';
+        
+        if (empty($signed_request)) {
+            http_response_code(400);
+            echo json_encode(array('error' => 'Missing signed_request'));
+            exit;
         }
         
-        $result = $this->post_to_threads($post);
+        $data = $this->parse_signed_request($signed_request);
         
-        if ($result) {
-            wp_send_json_success('Post successfully shared to Threads!');
-        } else {
-            wp_send_json_error('Failed to post to Threads. Check error logs.');
+        if (!$data) {
+            http_response_code(400);
+            echo json_encode(array('error' => 'Invalid signed_request'));
+            exit;
         }
+        
+        $user_id = isset($data['user_id']) ? $data['user_id'] : '';
+        
+        if ($user_id) {
+            $this->delete_user_data($user_id);
+        }
+        
+        $confirmation_code = 'threads_deletion_' . time() . '_' . wp_generate_password(8, false);
+        $status_url = home_url('?threads_deletion_status=' . $confirmation_code);
+        
+        echo json_encode(array(
+            'url' => $status_url,
+            'confirmation_code' => $confirmation_code
+        ));
+        exit;
+    }
+    
+    private function exchange_code_for_token($code) {
+        $app_id = get_option('threads_app_id');
+        $app_secret = get_option('threads_app_secret');
+        $redirect_uri = $this->get_redirect_uri();
+        
+        // Debug logging
+        error_log('Threads OAuth Debug: App ID = ' . ($app_id ? 'SET' : 'EMPTY'));
+        error_log('Threads OAuth Debug: App Secret = ' . ($app_secret ? 'SET' : 'EMPTY'));
+        error_log('Threads OAuth Debug: Redirect URI = ' . $redirect_uri);
+        error_log('Threads OAuth Debug: Code = ' . ($code ? 'SET' : 'EMPTY'));
+        
+        if (empty($app_id) || empty($app_secret)) {
+            error_log('Threads OAuth: Missing App ID or App Secret');
+            return false;
+        }
+        
+        $api_url = 'https://graph.threads.net/oauth/access_token';
+        
+        $data = array(
+            'client_id' => $app_id,
+            'client_secret' => $app_secret,
+            'grant_type' => 'authorization_code',
+            'redirect_uri' => $redirect_uri,
+            'code' => $code
+        );
+        
+        // Debug the request data
+        error_log('Threads OAuth Debug: Request data = ' . print_r($data, true));
+        
+        $args = array(
+            'headers' => array(
+                'Content-Type' => 'application/x-www-form-urlencoded'
+            ),
+            'body' => http_build_query($data),
+            'method' => 'POST',
+            'timeout' => 30
+        );
+        
+        // Debug the request body
+        error_log('Threads OAuth Debug: Request body = ' . $args['body']);
+        
+        $response = wp_remote_post($api_url, $args);
+        
+        if (is_wp_error($response)) {
+            error_log('Threads OAuth: Token exchange error - ' . $response->get_error_message());
+            return false;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        error_log('Threads OAuth Debug: Response code = ' . $response_code);
+        error_log('Threads OAuth Debug: Response body = ' . $body);
+        
+        $token_data = json_decode($body, true);
+        
+        if (isset($token_data['access_token'])) {
+            return $token_data['access_token'];
+        }
+        
+        error_log('Threads OAuth: Failed to exchange code - ' . $body);
+        return false;
+    }
+    
+    private function get_user_data($access_token) {
+        $api_url = 'https://graph.threads.net/v1.0/me?fields=id,username&access_token=' . $access_token;
+        
+        $response = wp_remote_get($api_url);
+        
+        if (is_wp_error($response)) {
+            error_log('Threads OAuth: User data error - ' . $response->get_error_message());
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        return json_decode($body, true);
+    }
+    
+    private function parse_signed_request($signed_request) {
+        $app_secret = get_option('threads_app_secret');
+        
+        list($encoded_signature, $payload) = explode('.', $signed_request, 2);
+        
+        $signature = base64_decode(strtr($encoded_signature, '-_', '+/'));
+        $data = json_decode(base64_decode(strtr($payload, '-_', '+/')), true);
+        
+        $expected_signature = hash_hmac('sha256', $payload, $app_secret, true);
+        
+        if (hash_equals($signature, $expected_signature)) {
+            return $data;
+        }
+        
+        return false;
+    }
+    
+    private function delete_user_data($user_id) {
+        global $wpdb;
+        
+        $wpdb->delete(
+            $wpdb->options,
+            array('option_name' => 'threads_user_id', 'option_value' => $user_id)
+        );
+        
+        $wpdb->delete(
+            $wpdb->postmeta,
+            array('meta_key' => '_threads_posted', 'meta_value' => '1')
+        );
+        
+        $wpdb->delete(
+            $wpdb->postmeta,
+            array('meta_key' => '_threads_post_id')
+        );
+        
+        error_log('Threads Auto Poster: Deleted data for user ' . $user_id);
     }
 }
 
