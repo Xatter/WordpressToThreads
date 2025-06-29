@@ -56,13 +56,25 @@ class ThreadsAutoPoster {
         add_option('threads_media_priority', 'featured');
         add_option('threads_token_expires', '');
         if (!wp_next_scheduled('threads_refresh_token')) {
+            // Schedule every 12 hours (43200 seconds) starting now
             wp_schedule_event(time(), 'twicedaily', 'threads_refresh_token');
         }
+        
+        // Add custom 12-hour interval if it doesn't exist
+        add_filter('cron_schedules', array($this, 'add_custom_cron_intervals'));
         flush_rewrite_rules();
     }
     
     public function deactivate() {
         wp_clear_scheduled_hook('threads_refresh_token');
+    }
+    
+    public function add_custom_cron_intervals($schedules) {
+        $schedules['twelve_hours'] = array(
+            'interval' => 12 * 60 * 60, // 12 hours in seconds
+            'display' => __('Every 12 Hours')
+        );
+        return $schedules;
     }
     
     public function add_admin_menu() {
