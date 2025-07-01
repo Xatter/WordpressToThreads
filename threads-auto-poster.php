@@ -167,7 +167,7 @@ class ThreadsAutoPoster {
                         </td>
                     </tr>
                     <tr>
-                        <th scope="row">Bitly Access Token</th>
+                        <th scope="row">Bitly Access Token (optional, but recommended)</th>
                         <td>
                             <input type="text" name="bitly_access_token" value="<?php echo esc_attr(get_option('bitly_access_token')); ?>" class="regular-text" />
                             <p class="description">Your Bitly API access token for URL shortening.</p>
@@ -305,20 +305,25 @@ class ThreadsAutoPoster {
             return $full_text;
         }
         
-        $short_url = $this->shorten_url($post_url);
-        if (!$short_url) {
-            $short_url = $post_url;
+        $bitly_token = get_option('bitly_access_token');
+        $url_to_use = $post_url;
+        
+        if (!empty($bitly_token)) {
+            $short_url = $this->shorten_url($post_url);
+            if ($short_url) {
+                $url_to_use = $short_url;
+            }
         }
         
-        $available_chars = $this->threads_character_limit - strlen($short_url) - 4;
+        $available_chars = $this->threads_character_limit - strlen($url_to_use) - 4;
         
         if (strlen($title) + 2 < $available_chars) {
             $remaining_chars = $available_chars - strlen($title) - 2;
             $truncated_content = substr($content, 0, $remaining_chars - 3) . '...';
-            return $title . "\n\n" . $truncated_content . "\n\n" . $short_url;
+            return $title . "\n\n" . $truncated_content . "\n\n" . $url_to_use;
         } else {
             $truncated_title = substr($title, 0, $available_chars - 3) . '...';
-            return $truncated_title . "\n\n" . $short_url;
+            return $truncated_title . "\n\n" . $url_to_use;
         }
     }
     
