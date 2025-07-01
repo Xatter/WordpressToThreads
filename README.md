@@ -1,4 +1,4 @@
-# Threads Auto Poster
+# Wordpress to Threads
 
 A WordPress plugin that automatically posts your blog posts to Threads with smart character limit handling and URL shortening.
 
@@ -23,7 +23,7 @@ A WordPress plugin that automatically posts your blog posts to Threads with smar
 ## Installation
 
 1. Download the plugin files
-2. Upload the `threads-auto-poster` folder to your `/wp-content/plugins/` directory
+2. Upload the `WordpressToThreads` folder to your `/wp-content/plugins/` directory
 3. Activate the plugin through the 'Plugins' menu in WordPress
 4. Go to Settings → Threads Auto Poster to configure
 
@@ -46,6 +46,7 @@ In your Meta app settings, add these OAuth redirect URIs:
 
 Replace `yourdomain.com` with your actual domain.
 
+
 ### Step 3: Get Bitly Access Token (Optional)
 
 1. Go to [Bitly](https://bitly.com/) and create an account
@@ -62,6 +63,8 @@ Replace `yourdomain.com` with your actual domain.
 5. Click **Authorize with Threads**
 6. Complete the OAuth authorization on Threads
 7. You'll be redirected back with authorization complete
+
+![Correct Credentials Location](./images/Correct%20Credentials.png)
 
 ## Usage
 
