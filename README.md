@@ -1,4 +1,4 @@
-# Wordpress to Threads
+# WordPress to Threads
 
 A WordPress plugin that automatically posts your blog posts to Threads with smart character limit handling and URL shortening.
 
@@ -25,7 +25,7 @@ A WordPress plugin that automatically posts your blog posts to Threads with smar
 1. Download the plugin files
 2. Upload the `WordpressToThreads` folder to your `/wp-content/plugins/` directory
 3. Activate the plugin through the 'Plugins' menu in WordPress
-4. Go to Settings → Threads Auto Poster to configure
+4. Go to Settings → WordPress to Threads to configure
 
 ## Setup Instructions
 
@@ -56,7 +56,7 @@ Replace `yourdomain.com` with your actual domain.
 
 ### Step 4: Configure the Plugin
 
-1. In WordPress, go to **Settings → Threads Auto Poster**
+1. In WordPress, go to **Settings → WordPress to Threads**
 2. Enter your **Threads App ID** and **Threads App Secret**
 3. Enter your **Bitly Access Token** (optional)
 4. Click **Save Changes**
@@ -82,7 +82,7 @@ Once configured, the plugin will automatically post to Threads whenever you publ
 
 To post existing blog posts:
 
-1. Go to **Settings → Threads Auto Poster**
+1. Go to **Settings → WordPress to Threads**
 2. Scroll down to **Manual Post to Threads**
 3. You'll see a table of your recent posts with their status
 4. Click **Post to Threads** next to any unposted content

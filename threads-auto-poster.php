@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: Wordpress to Threads
+ * Plugin Name: WordPress to Threads
  * Plugin URI: https://extroverteddeveloper.com
  * Description: Automatically posts WordPress blog posts to Meta's Threads platform with character limit handling and URL shortening.
  * Version: 1.0.0
@@ -79,8 +79,8 @@ class ThreadsAutoPoster {
     
     public function add_admin_menu() {
         add_options_page(
-            'Wordpress to Threads Settings',
-            'Wordpress to Threads',
+            'WordPress to Threads Settings',
+            'WordPress to Threads',
             'manage_options',
             'wordpress-to-threads',
             array($this, 'admin_page')
@@ -102,7 +102,7 @@ class ThreadsAutoPoster {
     public function admin_page() {
         ?>
         <div class="wrap">
-            <h1>Wordpress to Threads Settings</h1>
+            <h1>WordPress to Threads Settings</h1>
             <form method="post" action="options.php">
                 <?php
                 settings_fields('wordpress_to_threads_settings');
@@ -223,21 +223,21 @@ class ThreadsAutoPoster {
         $user_id = get_option('threads_user_id');
         
         if (empty($user_id)) {
-            error_log('Wordpress to Threads: Missing user ID. Please authorize the plugin.');
+            error_log('WordPress to Threads: Missing user ID. Please authorize the plugin.');
             return false;
         }
         
         // Ensure we have a valid access token (will refresh if needed)
         $access_token = $this->ensure_valid_token();
         if (empty($access_token)) {
-            error_log('Wordpress to Threads: Could not obtain valid access token. Please re-authorize the plugin.');
+            error_log('WordPress to Threads: Could not obtain valid access token. Please re-authorize the plugin.');
             return false;
         }
         
         $post_content = $this->prepare_post_content($post);
         
         if (!$post_content) {
-            error_log('Wordpress to Threads: Failed to prepare post content');
+            error_log('WordPress to Threads: Failed to prepare post content');
             return false;
         }
         
@@ -259,38 +259,38 @@ class ThreadsAutoPoster {
                 $threads_post_data['video_url'] = $media_info['url'];
             }
             
-            error_log('Wordpress to Threads: Posting with media - Type: ' . $media_info['type'] . ', URL: ' . $media_info['url']);
+            error_log('WordPress to Threads: Posting with media - Type: ' . $media_info['type'] . ', URL: ' . $media_info['url']);
         } else {
             $threads_post_data = array(
                 'media_type' => 'TEXT',
                 'text' => $post_content
             );
             
-            error_log('Wordpress to Threads: Posting text-only content');
+            error_log('WordPress to Threads: Posting text-only content');
         }
         
         $container_response = $this->create_threads_container($user_id, $threads_post_data, $access_token);
         
         if (!$container_response || !isset($container_response['id'])) {
-            error_log('Wordpress to Threads: Failed to create container. Response: ' . print_r($container_response, true));
+            error_log('WordPress to Threads: Failed to create container. Response: ' . print_r($container_response, true));
             return false;
         }
         
-        error_log('Wordpress to Threads: Container created successfully. ID: ' . $container_response['id']);
+        error_log('WordPress to Threads: Container created successfully. ID: ' . $container_response['id']);
         
         $publish_response = $this->publish_threads_container($user_id, $container_response['id'], $access_token);
         
-        error_log('Wordpress to Threads: Publish response: ' . print_r($publish_response, true));
+        error_log('WordPress to Threads: Publish response: ' . print_r($publish_response, true));
         
         if ($publish_response && isset($publish_response['id'])) {
-            error_log('Wordpress to Threads: Post successful, updating meta for post ID: ' . $post->ID);
+            error_log('WordPress to Threads: Post successful, updating meta for post ID: ' . $post->ID);
             update_post_meta($post->ID, '_threads_posted', '1');
             update_post_meta($post->ID, '_threads_post_id', $publish_response['id']);
-            error_log('Wordpress to Threads: Meta updated. Posted status: ' . get_post_meta($post->ID, '_threads_posted', true));
+            error_log('WordPress to Threads: Meta updated. Posted status: ' . get_post_meta($post->ID, '_threads_posted', true));
             return true;
         }
         
-        error_log('Wordpress to Threads: Publish failed or missing ID in response');
+        error_log('WordPress to Threads: Publish failed or missing ID in response');
         return false;
     }
     
@@ -353,7 +353,7 @@ class ThreadsAutoPoster {
         $response = wp_remote_post($api_url, $args);
         
         if (is_wp_error($response)) {
-            error_log('Wordpress to Threads: Bitly API error - ' . $response->get_error_message());
+            error_log('WordPress to Threads: Bitly API error - ' . $response->get_error_message());
             return false;
         }
         
@@ -502,7 +502,7 @@ class ThreadsAutoPoster {
         $response = $this->make_authenticated_request($api_url, $args);
         
         if (!$response) {
-            error_log('Wordpress to Threads: Failed to create container - authentication failed');
+            error_log('WordPress to Threads: Failed to create container - authentication failed');
             return false;
         }
         
@@ -529,7 +529,7 @@ class ThreadsAutoPoster {
         $response = $this->make_authenticated_request($api_url, $args);
         
         if (!$response) {
-            error_log('Wordpress to Threads: Failed to publish container - authentication failed');
+            error_log('WordPress to Threads: Failed to publish container - authentication failed');
             return false;
         }
         
@@ -537,12 +537,12 @@ class ThreadsAutoPoster {
         $body = wp_remote_retrieve_body($response);
         $headers = wp_remote_retrieve_headers($response);
         
-        error_log('Wordpress to Threads: Publish HTTP response code: ' . $response_code);
-        error_log('Wordpress to Threads: Publish raw response body: ' . $body);
-        error_log('Wordpress to Threads: Publish response headers: ' . print_r($headers, true));
+        error_log('WordPress to Threads: Publish HTTP response code: ' . $response_code);
+        error_log('WordPress to Threads: Publish raw response body: ' . $body);
+        error_log('WordPress to Threads: Publish response headers: ' . print_r($headers, true));
         
         $decoded_response = json_decode($body, true);
-        error_log('Wordpress to Threads: Publish decoded response: ' . print_r($decoded_response, true));
+        error_log('WordPress to Threads: Publish decoded response: ' . print_r($decoded_response, true));
         
         return $decoded_response;
     }
@@ -649,47 +649,47 @@ class ThreadsAutoPoster {
     }
     
     public function handle_manual_post() {
-        error_log('Wordpress to Threads: handle_manual_post called');
-        error_log('Wordpress to Threads: POST data: ' . print_r($_POST, true));
+        error_log('WordPress to Threads: handle_manual_post called');
+        error_log('WordPress to Threads: POST data: ' . print_r($_POST, true));
         
         if (!isset($_POST['nonce'])) {
-            error_log('Wordpress to Threads: No nonce provided');
+            error_log('WordPress to Threads: No nonce provided');
             wp_send_json_error('No security token provided');
             return;
         }
         
         if (!wp_verify_nonce($_POST['nonce'], 'threads_manual_post_nonce')) {
-            error_log('Wordpress to Threads: Nonce verification failed');
+            error_log('WordPress to Threads: Nonce verification failed');
             wp_send_json_error('Security check failed');
             return;
         }
         
         if (!current_user_can('manage_options')) {
-            error_log('Wordpress to Threads: User lacks permissions');
+            error_log('WordPress to Threads: User lacks permissions');
             wp_send_json_error('Insufficient permissions');
             return;
         }
         
         if (!isset($_POST['post_id'])) {
-            error_log('Wordpress to Threads: No post_id provided');
+            error_log('WordPress to Threads: No post_id provided');
             wp_send_json_error('No post ID provided');
             return;
         }
         
         $post_id = intval($_POST['post_id']);
-        error_log('Wordpress to Threads: Processing post ID: ' . $post_id);
+        error_log('WordPress to Threads: Processing post ID: ' . $post_id);
         
         $post = get_post($post_id);
         
         if (!$post || $post->post_type !== 'post') {
-            error_log('Wordpress to Threads: Invalid post or post type');
+            error_log('WordPress to Threads: Invalid post or post type');
             wp_send_json_error('Invalid post');
             return;
         }
         
         // Check if already posted
         if (get_post_meta($post_id, '_threads_posted', true)) {
-            error_log('Wordpress to Threads: Post already shared to Threads');
+            error_log('WordPress to Threads: Post already shared to Threads');
             wp_send_json_error('This post has already been shared to Threads');
             return;
         }
@@ -699,19 +699,19 @@ class ThreadsAutoPoster {
         $user_id = get_option('threads_user_id');
         
         if (empty($access_token) || empty($user_id)) {
-            error_log('Wordpress to Threads: Missing authentication credentials');
+            error_log('WordPress to Threads: Missing authentication credentials');
             wp_send_json_error('Plugin not properly authorized. Please re-authorize in settings.');
             return;
         }
         
-        error_log('Wordpress to Threads: Attempting to post to Threads');
+        error_log('WordPress to Threads: Attempting to post to Threads');
         $result = $this->post_to_threads($post);
         
         if ($result) {
-            error_log('Wordpress to Threads: Successfully posted to Threads');
+            error_log('WordPress to Threads: Successfully posted to Threads');
             wp_send_json_success('Post successfully shared to Threads!');
         } else {
-            error_log('Wordpress to Threads: Failed to post to Threads');
+            error_log('WordPress to Threads: Failed to post to Threads');
             wp_send_json_error('Failed to post to Threads. Check error logs for details.');
         }
     }
@@ -1007,7 +1007,7 @@ class ThreadsAutoPoster {
         $current_token = get_option('threads_access_token');
         
         if (empty($current_token)) {
-            error_log('Wordpress to Threads: No access token to refresh via cron');
+            error_log('WordPress to Threads: No access token to refresh via cron');
             return false;
         }
         
@@ -1020,19 +1020,19 @@ class ThreadsAutoPoster {
             'timeout' => 30
         );
         
-        error_log('Wordpress to Threads: Long-term token refresh triggered');
+        error_log('WordPress to Threads: Long-term token refresh triggered');
         $response = wp_remote_get($api_url, $args);
         
         if (is_wp_error($response)) {
-            error_log('Wordpress to Threads: Long-term token refresh error - ' . $response->get_error_message());
+            error_log('WordPress to Threads: Long-term token refresh error - ' . $response->get_error_message());
             return false;
         }
         
         $response_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
         
-        error_log('Wordpress to Threads: Long-term token refresh response code: ' . $response_code);
-        error_log('Wordpress to Threads: Long-term token refresh response body: ' . $body);
+        error_log('WordPress to Threads: Long-term token refresh response code: ' . $response_code);
+        error_log('WordPress to Threads: Long-term token refresh response body: ' . $body);
         
         $token_data = json_decode($body, true);
         
@@ -1044,7 +1044,7 @@ class ThreadsAutoPoster {
             update_option('threads_access_token', $new_token);
             update_option('threads_token_expires', time() + $expires_in);
             
-            error_log('Wordpress to Threads: Long-term token refresh successful, new token expires in ' . $expires_in . ' seconds');
+            error_log('WordPress to Threads: Long-term token refresh successful, new token expires in ' . $expires_in . ' seconds');
             return $new_token;
         }
         
@@ -1053,12 +1053,12 @@ class ThreadsAutoPoster {
             $error = $token_data['error'];
             if (isset($error['type']) && $error['type'] === 'OAuthException' && 
                 isset($error['code']) && $error['code'] == 190) {
-                error_log('Wordpress to Threads: Long-term access token has expired via cron, clearing credentials to force re-authorization');
+                error_log('WordPress to Threads: Long-term access token has expired via cron, clearing credentials to force re-authorization');
                 $this->clear_authentication_data();
             }
         }
         
-        error_log('Wordpress to Threads: Long-term token refresh failed - ' . $body);
+        error_log('WordPress to Threads: Long-term token refresh failed - ' . $body);
         return false;
     }
     
@@ -1066,7 +1066,7 @@ class ThreadsAutoPoster {
         delete_option('threads_access_token');
         delete_option('threads_token_expires');
         // Keep threads_user_id - it doesn't change between authorizations
-        error_log('Wordpress to Threads: Expired token cleared, user ID preserved');
+        error_log('WordPress to Threads: Expired token cleared, user ID preserved');
     }
     
     private function is_token_expired() {
@@ -1086,17 +1086,17 @@ class ThreadsAutoPoster {
         // First check if we have any token at all
         $current_token = get_option('threads_access_token');
         if (empty($current_token)) {
-            error_log('Wordpress to Threads: No access token available');
+            error_log('WordPress to Threads: No access token available');
             return false;
         }
         
         if ($this->is_token_expired()) {
-            error_log('Wordpress to Threads: Token is expired or expiring soon, attempting refresh');
+            error_log('WordPress to Threads: Token is expired or expiring soon, attempting refresh');
             $new_token = $this->refresh_access_token();
             
             // If refresh failed and credentials were cleared, return false
             if (!$new_token && empty(get_option('threads_access_token'))) {
-                error_log('Wordpress to Threads: Token refresh failed and credentials cleared');
+                error_log('WordPress to Threads: Token refresh failed and credentials cleared');
                 return false;
             }
             
@@ -1112,7 +1112,7 @@ class ThreadsAutoPoster {
         // Ensure we have a valid token before making the request
         $access_token = $this->ensure_valid_token();
         if (!$access_token) {
-            error_log('Wordpress to Threads: No valid access token available');
+            error_log('WordPress to Threads: No valid access token available');
             return false;
         }
         
@@ -1122,11 +1122,11 @@ class ThreadsAutoPoster {
         }
         $args['headers']['Authorization'] = 'Bearer ' . $access_token;
         
-        error_log('Wordpress to Threads: Making authenticated request to ' . $url . ' (attempt ' . ($retry_count + 1) . ')');
+        error_log('WordPress to Threads: Making authenticated request to ' . $url . ' (attempt ' . ($retry_count + 1) . ')');
         $response = wp_remote_post($url, $args);
         
         if (is_wp_error($response)) {
-            error_log('Wordpress to Threads: Request error - ' . $response->get_error_message());
+            error_log('WordPress to Threads: Request error - ' . $response->get_error_message());
             return false;
         }
         
@@ -1135,7 +1135,7 @@ class ThreadsAutoPoster {
         
         // Check for authentication errors
         if ($response_code === 401) {
-            error_log('Wordpress to Threads: Authentication error (HTTP ' . $response_code . '), response: ' . $body);
+            error_log('WordPress to Threads: Authentication error (HTTP ' . $response_code . '), response: ' . $body);
             
             // Parse response to check for specific OAuth error
             $error_data = json_decode($body, true);
@@ -1146,25 +1146,25 @@ class ThreadsAutoPoster {
                 if (isset($error['type']) && $error['type'] === 'OAuthException' && 
                     isset($error['code']) && $error['code'] == 190) {
                     $is_oauth_190 = true;
-                    error_log('Wordpress to Threads: Detected OAuthException with code 190 - token expired');
+                    error_log('WordPress to Threads: Detected OAuthException with code 190 - token expired');
                 }
             }
             
             if ($is_oauth_190 && $retry_count < $max_retries) {
-                error_log('Wordpress to Threads: Attempting token refresh for expired token');
+                error_log('WordPress to Threads: Attempting token refresh for expired token');
                 
                 // Attempt token refresh with current (expired) token
                 $new_token = $this->refresh_access_token();
                 if ($new_token) {
-                    error_log('Wordpress to Threads: Token refresh successful, retrying request');
+                    error_log('WordPress to Threads: Token refresh successful, retrying request');
                     return $this->make_authenticated_request($url, $args, $retry_count + 1);
                 } else {
-                    error_log('Wordpress to Threads: Token refresh failed, clearing authentication data');
+                    error_log('WordPress to Threads: Token refresh failed, clearing authentication data');
                     $this->clear_authentication_data();
                 }
             }
             
-            error_log('Wordpress to Threads: Authentication failed, exhausted retries');
+            error_log('WordPress to Threads: Authentication failed, exhausted retries');
             return false;
         }
         
@@ -1206,7 +1206,7 @@ class ThreadsAutoPoster {
             array('meta_key' => '_threads_post_id')
         );
         
-        error_log('Wordpress to Threads: Deleted data for user ' . $user_id);
+        error_log('WordPress to Threads: Deleted data for user ' . $user_id);
     }
 }
 
