@@ -5,7 +5,7 @@
  * Description: Automatically posts WordPress blog posts to Meta's Threads platform with character limit handling and URL shortening.
  * Version: 1.0.0
  * Author: ExtrovertedDeveloper
- * License: GPL v2 or later
+ * License: MIT
  * Text Domain: threads-auto-poster
  */
 

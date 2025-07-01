@@ -194,4 +194,4 @@ All data can be removed using the deauthorization feature or GDPR endpoints.
 
 ## License
 
-GPL v2 or later
+MIT License - see LICENSE file for details
