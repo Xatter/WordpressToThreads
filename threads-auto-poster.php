@@ -242,34 +242,106 @@ class ThreadsAutoPoster {
         }
         
         // Check for media in the post (if enabled)
-        $media_info = null;
+        $media_items = array();
         if (get_option('threads_include_media', '1') === '1') {
-            $media_info = $this->extract_post_media($post);
+            $media_items = $this->extract_post_images_and_videos($post);
         }
-        
-        if ($media_info && !empty($media_info['url'])) {
-            $threads_post_data = array(
-                'media_type' => $media_info['type'],
-                'text' => $post_content
-            );
-            
-            if ($media_info['type'] === 'IMAGE') {
-                $threads_post_data['image_url'] = $media_info['url'];
-            } elseif ($media_info['type'] === 'VIDEO') {
-                $threads_post_data['video_url'] = $media_info['url'];
+
+        $threads_post_data = array(
+            'text' => $post_content
+        );
+
+        $media_container_ids = array();
+        $final_container_id = null; // This will hold the ID of the final container to publish (either text-only, single media, or carousel album)
+
+        // If there are media items
+        if (!empty($media_items)) {
+            // Create containers for each individual media item (without text for now)
+            foreach ($media_items as $media_item) {
+                $media_type = $media_item['type'];
+                $media_url = $media_item['url'];
+
+                $media_specific_data = array();
+                if ($media_type === 'IMAGE') {
+                    $media_specific_data['image_url'] = $media_url;
+                } elseif ($media_type === 'VIDEO') {
+                    $media_specific_data['video_url'] = $media_url;
+                }
+
+                $container_response = $this->create_threads_container($user_id, $media_specific_data, $access_token);
+
+                if ($container_response && isset($container_response['id'])) {
+                    $media_container_ids[] = $container_response['id'];
+                    error_log('WordPress to Threads: Media container created. ID: ' . $container_response['id']);
+                } else {
+                    error_log('WordPress to Threads: Failed to create media container. Response: ' . print_r($container_response, true));
+                    // If any media container fails, clear all and fall back to text-only
+                    $media_container_ids = array();
+                    break;
+                }
             }
-            
-            error_log('WordPress to Threads: Posting with media - Type: ' . $media_info['type'] . ', URL: ' . $media_info['url']);
-        } else {
-            $threads_post_data = array(
-                'media_type' => 'TEXT',
-                'text' => $post_content
-            );
-            
-            error_log('WordPress to Threads: Posting text-only content');
+
+            // Now, determine the final container to publish based on media count
+            if (count($media_container_ids) > 1) {
+                // Multiple media items: create a carousel album container
+                error_log('WordPress to Threads: Creating carousel album container with IDs: ' . implode(', ', $media_container_ids));
+                $carousel_container_data = array(
+                    'media_type' => 'CAROUSEL',
+                    'children' => $media_container_ids,
+                    'text' => $post_content // Text for the entire carousel post
+                );
+                $container_response = $this->create_threads_container($user_id, $carousel_container_data, $access_token);
+                if ($container_response && isset($container_response['id'])) {
+                    $final_container_id = $container_response['id'];
+                } else {
+                    error_log('WordPress to Threads: Failed to create carousel album container. Response: ' . print_r($container_response, true));
+                    // Fallback to text-only if carousel creation fails
+                    $final_container_id = null;
+                }
+            } elseif (count($media_container_ids) === 1) {
+                // Single media item: re-create the container with text
+                $media_item = $media_items[0]; // Get the first (and only) media item
+                $media_type = $media_item['type'];
+                $media_url = $media_item['url'];
+
+                $single_media_post_data = array(
+                    'text' => $post_content
+                );
+                if ($media_type === 'IMAGE') {
+                    $single_media_post_data['image_url'] = $media_url;
+                } elseif ($media_type === 'VIDEO') {
+                    $single_media_post_data['video_url'] = $media_url;
+                }
+                $container_response = $this->create_threads_container($user_id, $single_media_post_data, $access_token);
+                if ($container_response && isset($container_response['id'])) {
+                    $final_container_id = $container_response['id'];
+                    error_log('WordPress to Threads: Single media container with text created. ID: ' . $final_container_id);
+                } else {
+                    error_log('WordPress to Threads: Failed to create single media container with text. Response: ' . print_r($container_response, true));
+                    $final_container_id = null;
+                }
+            }
         }
-        
-        $container_response = $this->create_threads_container($user_id, $threads_post_data, $access_token);
+
+        // If no media or media container creation failed, proceed with text-only post
+        if (empty($final_container_id)) {
+            error_log('WordPress to Threads: No valid media container, posting text-only content');
+            $container_response = $this->create_threads_container($user_id, $threads_post_data, $access_token);
+            if (!$container_response || !isset($container_response['id'])) {
+                error_log('WordPress to Threads: Failed to create text-only container. Response: ' . print_r($container_response, true));
+                return false;
+            }
+            $final_container_id = $container_response['id'];
+        }
+
+        if (!$final_container_id) {
+            error_log('WordPress to Threads: No container ID available for publishing.');
+            return false;
+        }
+
+        error_log('WordPress to Threads: Final container ID for publishing: ' . $final_container_id);
+
+        $publish_response = $this->publish_threads_container($user_id, $final_container_id, $access_token);
         
         if (!$container_response || !isset($container_response['id'])) {
             error_log('WordPress to Threads: Failed to create container. Response: ' . print_r($container_response, true));
@@ -367,90 +439,121 @@ class ThreadsAutoPoster {
         return false;
     }
     
-    private function extract_post_media($post) {
+    private function extract_post_images_and_videos($post) {
         $media_priority = get_option('threads_media_priority', 'featured');
         
-        // Collect all available media
-        $featured_image = null;
-        $content_images = array();
-        $videos = array();
+        $all_media = array();
         
         // Get featured image
         $thumbnail_id = get_post_thumbnail_id($post->ID);
         if ($thumbnail_id) {
             $image_url = wp_get_attachment_image_url($thumbnail_id, 'large');
             if ($image_url && $this->is_valid_image_url($image_url)) {
-                $featured_image = array(
+                $all_media['featured'] = array(
                     'type' => 'IMAGE',
                     'url' => $image_url,
-                    'id' => $thumbnail_id
+                    'id' => $thumbnail_id,
+                    'order' => -1 // Featured image has highest priority
                 );
             }
         }
         
         // Get images from post content
-        preg_match_all('/<img[^>]+src="([^"]+)"[^>]*>/i', $post->post_content, $matches);
+        preg_match_all('/<img[^>]+src="([^"]+)"[^>]*>/i', $post->post_content, $matches, PREG_OFFSET_CAPTURE);
         if (!empty($matches[1])) {
-            foreach ($matches[1] as $img_url) {
+            foreach ($matches[1] as $index => $match) {
+                $img_url = $match[0];
+                $offset = $match[1];
                 if ($this->is_valid_image_url($img_url)) {
-                    $content_images[] = array(
+                    $all_media['content_image_' . $index] = array(
                         'type' => 'IMAGE',
                         'url' => $img_url,
-                        'id' => null
+                        'id' => null,
+                        'order' => $offset
                     );
                 }
             }
         }
         
-        // Get videos from shortcodes
+        // Get videos from shortcodes and HTML tags
+        // For simplicity, we'll just get the first valid video for now, as Threads API only supports one video per post (or carousel item)
+        $video_found = false;
+        
+        // From shortcodes
         if (has_shortcode($post->post_content, 'video')) {
-            preg_match('/\[video[^\]]*src="([^"]+)"[^\]]*\]/i', $post->post_content, $video_match);
-            if (!empty($video_match[1]) && $this->is_valid_video_url($video_match[1])) {
-                $videos[] = array(
+            preg_match('/\[video[^\]]*src="([^"]+)"[^\]]*\]/i', $post->post_content, $video_match, PREG_OFFSET_CAPTURE);
+            if (!empty($video_match[1]) && $this->is_valid_video_url($video_match[1][0])) {
+                $all_media['video_shortcode'] = array(
                     'type' => 'VIDEO',
-                    'url' => $video_match[1],
-                    'id' => null
+                    'url' => $video_match[1][0],
+                    'id' => null,
+                    'order' => $video_match[1][1]
                 );
+                $video_found = true;
             }
         }
         
-        // Get videos from HTML tags
-        preg_match_all('/<video[^>]+src="([^"]+)"[^>]*>/i', $post->post_content, $video_matches);
-        if (!empty($video_matches[1])) {
-            foreach ($video_matches[1] as $video_url) {
-                if ($this->is_valid_video_url($video_url)) {
-                    $videos[] = array(
-                        'type' => 'VIDEO',
-                        'url' => $video_url,
-                        'id' => null
-                    );
+        // From HTML tags (only if no video found from shortcode or if shortcode video is invalid)
+        if (!$video_found) {
+            preg_match('/<video[^>]+src="([^"]+)"[^>]*>/i', $post->post_content, $video_match, PREG_OFFSET_CAPTURE);
+            if (!empty($video_match[1]) && $this->is_valid_video_url($video_match[1][0])) {
+                $all_media['video_html'] = array(
+                    'type' => 'VIDEO',
+                    'url' => $video_match[1][0],
+                    'id' => null,
+                    'order' => $video_match[1][1]
+                );
+                $video_found = true;
+            }
+        }
+        
+        // Sort all media by their appearance order in the content, with featured image first
+        uasort($all_media, function($a, $b) {
+            if ($a['order'] == $b['order']) {
+                return 0;
+            }
+            return ($a['order'] < $b['order']) ? -1 : 1;
+        });
+        
+        $final_media_list = array();
+        
+        // Add featured image if it exists and priority is 'featured'
+        if ($media_priority === 'featured' && isset($all_media['featured'])) {
+            $final_media_list[] = $all_media['featured'];
+            unset($all_media['featured']); // Remove to avoid duplication
+        }
+        
+        // Add videos based on priority
+        if ($media_priority === 'video') {
+            foreach ($all_media as $key => $media_item) {
+                if ($media_item['type'] === 'VIDEO') {
+                    $final_media_list[] = $media_item;
+                    unset($all_media[$key]);
+                    break; // Only one video is supported per post/carousel item
                 }
             }
         }
         
-        // Return media based on priority
-        switch ($media_priority) {
-            case 'video':
-                if (!empty($videos)) return $videos[0];
-                if ($featured_image) return $featured_image;
-                if (!empty($content_images)) return $content_images[0];
-                break;
-                
-            case 'content':
-                if (!empty($content_images)) return $content_images[0];
-                if ($featured_image) return $featured_image;
-                if (!empty($videos)) return $videos[0];
-                break;
-                
-            case 'featured':
-            default:
-                if ($featured_image) return $featured_image;
-                if (!empty($content_images)) return $content_images[0];
-                if (!empty($videos)) return $videos[0];
-                break;
+        // Add remaining images and videos in their sorted order
+        foreach ($all_media as $media_item) {
+            $final_media_list[] = $media_item;
         }
         
-        return null;
+        // Ensure only one video is included in the final list, as Threads API only supports one video per post (or carousel item)
+        $video_count = 0;
+        $filtered_media_list = array();
+        foreach ($final_media_list as $item) {
+            if ($item['type'] === 'VIDEO') {
+                if ($video_count === 0) {
+                    $filtered_media_list[] = $item;
+                    $video_count++;
+                }
+            } else {
+                $filtered_media_list[] = $item;
+            }
+        }
+        
+        return $filtered_media_list;
     }
     
     private function is_valid_image_url($url) {
