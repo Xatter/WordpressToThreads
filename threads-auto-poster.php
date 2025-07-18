@@ -37,12 +37,12 @@ class ThreadsAutoPoster {
     
     public function init() {
         add_action('publish_post', array($this, 'auto_post_to_threads'), 10, 2);
+        $this->handle_oauth_endpoints();
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'admin_init'));
         add_action('wp_ajax_threads_manual_post', array($this, 'handle_manual_post'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         add_action('threads_refresh_token', array($this, 'refresh_access_token'));
-        $this->handle_oauth_endpoints();
     }
     
     public function activate() {
@@ -248,6 +248,7 @@ class ThreadsAutoPoster {
         }
 
         $threads_post_data = array(
+            'media_type' => 'TEXT',
             'text' => $post_content
         );
 
@@ -261,7 +262,9 @@ class ThreadsAutoPoster {
                 $media_type = $media_item['type'];
                 $media_url = $media_item['url'];
 
-                $media_specific_data = array();
+                $media_specific_data = array(
+                    'media_type' => $media_type
+                );
                 if ($media_type === 'IMAGE') {
                     $media_specific_data['image_url'] = $media_url;
                 } elseif ($media_type === 'VIDEO') {
@@ -305,6 +308,7 @@ class ThreadsAutoPoster {
                 $media_url = $media_item['url'];
 
                 $single_media_post_data = array(
+                    'media_type' => $media_type,
                     'text' => $post_content
                 );
                 if ($media_type === 'IMAGE') {
@@ -326,7 +330,11 @@ class ThreadsAutoPoster {
         // If no media or media container creation failed, proceed with text-only post
         if (empty($final_container_id)) {
             error_log('WordPress to Threads: No valid media container, posting text-only content');
-            $container_response = $this->create_threads_container($user_id, $threads_post_data, $access_token);
+            $text_only_data = array(
+                'media_type' => 'TEXT',
+                'text' => $post_content
+            );
+            $container_response = $this->create_threads_container($user_id, $text_only_data, $access_token);
             if (!$container_response || !isset($container_response['id'])) {
                 error_log('WordPress to Threads: Failed to create text-only container. Response: ' . print_r($container_response, true));
                 return false;
@@ -343,14 +351,12 @@ class ThreadsAutoPoster {
 
         $publish_response = $this->publish_threads_container($user_id, $final_container_id, $access_token);
         
-        if (!$container_response || !isset($container_response['id'])) {
-            error_log('WordPress to Threads: Failed to create container. Response: ' . print_r($container_response, true));
+        if (!$publish_response || !isset($publish_response['id'])) {
+            error_log('WordPress to Threads: Failed to publish container. Response: ' . print_r($publish_response, true));
             return false;
         }
         
-        error_log('WordPress to Threads: Container created successfully. ID: ' . $container_response['id']);
-        
-        $publish_response = $this->publish_threads_container($user_id, $container_response['id'], $access_token);
+        error_log('WordPress to Threads: Post published successfully. ID: ' . $publish_response['id']);
         
         error_log('WordPress to Threads: Publish response: ' . print_r($publish_response, true));
         
@@ -820,7 +826,6 @@ class ThreadsAutoPoster {
     }
     
     public function handle_oauth_endpoints() {
-        error_log('Threads OAuth Debug: handle_oauth_endpoints called. GET params: ' . print_r($_GET, true));
         if (isset($_GET['threads_oauth_action'])) {
             error_log('Threads OAuth Debug: Found threads_oauth_action = ' . $_GET['threads_oauth_action']);
             switch ($_GET['threads_oauth_action']) {
@@ -835,8 +840,6 @@ class ThreadsAutoPoster {
                     $this->handle_data_deletion();
                     break;
             }
-        } else {
-            error_log('Threads OAuth Debug: No threads_oauth_action found in GET params');
         }
     }
     
