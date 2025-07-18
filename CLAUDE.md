@@ -78,3 +78,7 @@ This is a WordPress plugin called "Threads Auto Poster" that automatically posts
 - WordPress error handling for HTTP requests
 - User-friendly error messages in admin interface
 - Graceful degradation when Bitly token unavailable
+
+## Deployment Notes
+
+- You can check the production logs with `docker service logs extroverteddeveloper`
