@@ -82,3 +82,7 @@ This is a WordPress plugin called "Threads Auto Poster" that automatically posts
 ## Deployment Notes
 
 - You can check the production logs with `docker service logs extroverteddeveloper`
+
+## Development Environment
+
+- This project uses Docker for php

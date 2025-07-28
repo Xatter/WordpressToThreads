@@ -55,6 +55,9 @@ class ThreadsAutoPoster {
         add_option('threads_include_media', '1');
         add_option('threads_media_priority', 'featured');
         add_option('threads_token_expires', '');
+        add_option('threads_enable_thread_chains', '1');
+        add_option('threads_max_chain_length', '5');
+        add_option('threads_split_preference', 'sentences');
         if (!wp_next_scheduled('threads_refresh_token')) {
             // Schedule every 12 hours (43200 seconds) starting now
             wp_schedule_event(time(), 'twicedaily', 'threads_refresh_token');
@@ -97,6 +100,9 @@ class ThreadsAutoPoster {
         register_setting('wordpress_to_threads_settings', 'threads_include_media');
         register_setting('wordpress_to_threads_settings', 'threads_media_priority');
         register_setting('wordpress_to_threads_settings', 'threads_token_expires');
+        register_setting('wordpress_to_threads_settings', 'threads_enable_thread_chains');
+        register_setting('wordpress_to_threads_settings', 'threads_max_chain_length');
+        register_setting('wordpress_to_threads_settings', 'threads_split_preference');
     }
     
     public function admin_page() {
@@ -191,6 +197,38 @@ class ThreadsAutoPoster {
                             <p class="description">Choose which media to prioritize when multiple options are available.</p>
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row">Enable Thread Chains</th>
+                        <td>
+                            <input type="checkbox" name="threads_enable_thread_chains" value="1" <?php checked(get_option('threads_enable_thread_chains', '1'), '1'); ?> />
+                            <p class="description">For posts longer than 500 characters, create a series of connected thread posts instead of truncating.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Maximum Thread Chain Length</th>
+                        <td>
+                            <select name="threads_max_chain_length">
+                                <?php
+                                $max_length = get_option('threads_max_chain_length', '5');
+                                for ($i = 2; $i <= 10; $i++) {
+                                    echo '<option value="' . $i . '"' . selected($max_length, $i, false) . '>' . $i . ' posts</option>';
+                                }
+                                ?>
+                            </select>
+                            <p class="description">Maximum number of posts in a thread chain (including the main post).</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Content Splitting Method</th>
+                        <td>
+                            <select name="threads_split_preference">
+                                <option value="sentences" <?php selected(get_option('threads_split_preference', 'sentences'), 'sentences'); ?>>Split at sentence boundaries</option>
+                                <option value="paragraphs" <?php selected(get_option('threads_split_preference', 'sentences'), 'paragraphs'); ?>>Split at paragraph boundaries</option>
+                                <option value="words" <?php selected(get_option('threads_split_preference', 'sentences'), 'words'); ?>>Split at word boundaries</option>
+                            </select>
+                            <p class="description">How to intelligently split long content into thread posts.</p>
+                        </td>
+                    </tr>
                 </table>
                 <?php submit_button(); ?>
             </form>
@@ -234,6 +272,18 @@ class ThreadsAutoPoster {
             return false;
         }
         
+        // Check if we should use thread chains for long content
+        $enable_thread_chains = get_option('threads_enable_thread_chains', '1') === '1';
+        $title = $post->post_title;
+        $content = wp_strip_all_tags($post->post_content);
+        $full_text = $title . "\n\n" . $content;
+        
+        if ($enable_thread_chains && strlen($full_text) > $this->threads_character_limit) {
+            error_log('WordPress to Threads: Content exceeds character limit, using thread chain');
+            return $this->create_thread_chain($post);
+        }
+        
+        // Use original single-post method for shorter content
         $post_content = $this->prepare_post_content($post);
         
         if (!$post_content) {
@@ -403,6 +453,273 @@ class ThreadsAutoPoster {
             $truncated_title = substr($title, 0, $available_chars - 3) . '...';
             return $truncated_title . "\n\n" . $url_to_use;
         }
+    }
+    
+    private function split_content_for_thread_chain($post) {
+        $title = $post->post_title;
+        $content = wp_strip_all_tags($post->post_content);
+        $post_url = get_permalink($post->ID);
+        $split_preference = get_option('threads_split_preference', 'sentences');
+        $max_chain_length = (int) get_option('threads_max_chain_length', 5);
+        
+        // Shorten URL if Bitly is available
+        $bitly_token = get_option('bitly_access_token');
+        $url_to_use = $post_url;
+        if (!empty($bitly_token)) {
+            $short_url = $this->shorten_url($post_url);
+            if ($short_url) {
+                $url_to_use = $short_url;
+            }
+        }
+        
+        // Full text with title and content
+        $full_text = $title . "\n\n" . $content;
+        
+        // Calculate available characters for content (reserve space for URL at the end)
+        $url_space = strlen("\n\n" . $url_to_use);
+        $available_chars_last_post = $this->threads_character_limit - $url_space;
+        $available_chars_regular = $this->threads_character_limit;
+        
+        $thread_parts = array();
+        $remaining_text = $full_text;
+        $part_count = 0;
+        
+        while (!empty($remaining_text) && $part_count < $max_chain_length) {
+            $part_count++;
+            $is_last_part = ($part_count == $max_chain_length);
+            $char_limit = $is_last_part ? $available_chars_last_post : $available_chars_regular;
+            
+            if (strlen($remaining_text) <= $char_limit) {
+                // Remaining text fits in this part
+                $part_text = $remaining_text;
+                if ($is_last_part || $part_count == 1) {
+                    $part_text .= "\n\n" . $url_to_use;
+                }
+                $thread_parts[] = $part_text;
+                break;
+            }
+            
+            // Need to split the content
+            $split_point = $this->find_split_point($remaining_text, $char_limit, $split_preference);
+            
+            if ($split_point === false) {
+                // No good split point found, force split at character limit
+                $split_point = $char_limit - 3; // Leave room for "..."
+                $part_text = substr($remaining_text, 0, $split_point) . '...';
+            } else {
+                $part_text = substr($remaining_text, 0, $split_point);
+            }
+            
+            // Add URL to the last part only
+            if ($is_last_part) {
+                $part_text .= "\n\n" . $url_to_use;
+            }
+            
+            $thread_parts[] = trim($part_text);
+            $remaining_text = trim(substr($remaining_text, $split_point));
+        }
+        
+        // If we still have remaining text and hit the max chain length, append URL to last part
+        if (!empty($remaining_text) && !strpos(end($thread_parts), $url_to_use)) {
+            $last_part = array_pop($thread_parts);
+            $last_part .= "\n\n" . $url_to_use;
+            $thread_parts[] = $last_part;
+        }
+        
+        return $thread_parts;
+    }
+    
+    private function find_split_point($text, $max_length, $split_preference) {
+        if (strlen($text) <= $max_length) {
+            return strlen($text);
+        }
+        
+        // Get the portion we're considering for splitting
+        $search_text = substr($text, 0, $max_length);
+        
+        switch ($split_preference) {
+            case 'sentences':
+                // Look for sentence endings (. ! ?) followed by space or end of string
+                if (preg_match('/.*[.!?](?=\s|$)/s', $search_text, $matches)) {
+                    return strlen($matches[0]);
+                }
+                // Fall through to paragraph splitting if no sentence boundary found
+                
+            case 'paragraphs':
+                // Look for double newlines (paragraph breaks)
+                $last_paragraph = strrpos($search_text, "\n\n");
+                if ($last_paragraph !== false && $last_paragraph > $max_length * 0.5) {
+                    return $last_paragraph + 2; // Include the paragraph break
+                }
+                // Fall through to word splitting if no paragraph boundary found
+                
+            case 'words':
+            default:
+                // Look for last complete word
+                $last_space = strrpos($search_text, ' ');
+                if ($last_space !== false && $last_space > $max_length * 0.7) {
+                    return $last_space + 1; // Include the space
+                }
+                break;
+        }
+        
+        return false; // No good split point found
+    }
+    
+    private function create_thread_chain($post) {
+        $user_id = get_option('threads_user_id');
+        
+        if (empty($user_id)) {
+            error_log('WordPress to Threads: Missing user ID for thread chain. Please authorize the plugin.');
+            return false;
+        }
+        
+        // Ensure we have a valid access token
+        $access_token = $this->ensure_valid_token();
+        if (empty($access_token)) {
+            error_log('WordPress to Threads: Could not obtain valid access token for thread chain. Please re-authorize the plugin.');
+            return false;
+        }
+        
+        // Split content into thread parts
+        $thread_parts = $this->split_content_for_thread_chain($post);
+        
+        if (empty($thread_parts)) {
+            error_log('WordPress to Threads: No thread parts generated');
+            return false;
+        }
+        
+        error_log('WordPress to Threads: Creating thread chain with ' . count($thread_parts) . ' parts');
+        
+        $thread_post_ids = array();
+        $previous_post_id = null;
+        
+        // Process each part of the thread
+        foreach ($thread_parts as $index => $part_content) {
+            $is_first_post = ($index === 0);
+            
+            // Check for media in the first post only (if enabled)
+            $media_items = array();
+            if ($is_first_post && get_option('threads_include_media', '1') === '1') {
+                $media_items = $this->extract_post_images_and_videos($post);
+            }
+            
+            // Prepare the thread post data
+            $thread_post_data = array(
+                'media_type' => 'TEXT',
+                'text' => $part_content
+            );
+            
+            // Add reply_to_id for all posts except the first one
+            if (!$is_first_post && $previous_post_id) {
+                $thread_post_data['reply_to_id'] = $previous_post_id;
+            }
+            
+            $media_container_ids = array();
+            $final_container_id = null;
+            
+            // Handle media for the first post only
+            if ($is_first_post && !empty($media_items)) {
+                // Create containers for each individual media item
+                foreach ($media_items as $media_item) {
+                    $media_type = $media_item['type'];
+                    $media_url = $media_item['url'];
+                    
+                    $media_specific_data = array(
+                        'media_type' => $media_type
+                    );
+                    if ($media_type === 'IMAGE') {
+                        $media_specific_data['image_url'] = $media_url;
+                    } elseif ($media_type === 'VIDEO') {
+                        $media_specific_data['video_url'] = $media_url;
+                    }
+                    
+                    $container_response = $this->create_threads_container($user_id, $media_specific_data, $access_token);
+                    
+                    if ($container_response && isset($container_response['id'])) {
+                        $media_container_ids[] = $container_response['id'];
+                        error_log('WordPress to Threads: Media container created for thread part ' . ($index + 1) . '. ID: ' . $container_response['id']);
+                    } else {
+                        error_log('WordPress to Threads: Failed to create media container for thread part ' . ($index + 1) . '. Response: ' . print_r($container_response, true));
+                        $media_container_ids = array();
+                        break;
+                    }
+                }
+                
+                // Handle multiple media items with carousel
+                if (count($media_container_ids) > 1) {
+                    $carousel_container_data = array(
+                        'media_type' => 'CAROUSEL',
+                        'children' => $media_container_ids,
+                        'text' => $part_content
+                    );
+                    $container_response = $this->create_threads_container($user_id, $carousel_container_data, $access_token);
+                    if ($container_response && isset($container_response['id'])) {
+                        $final_container_id = $container_response['id'];
+                    }
+                } elseif (count($media_container_ids) === 1) {
+                    // Single media item: re-create the container with text
+                    $media_item = $media_items[0];
+                    $media_type = $media_item['type'];
+                    $media_url = $media_item['url'];
+                    
+                    $single_media_post_data = array(
+                        'media_type' => $media_type,
+                        'text' => $part_content
+                    );
+                    if ($media_type === 'IMAGE') {
+                        $single_media_post_data['image_url'] = $media_url;
+                    } elseif ($media_type === 'VIDEO') {
+                        $single_media_post_data['video_url'] = $media_url;
+                    }
+                    $container_response = $this->create_threads_container($user_id, $single_media_post_data, $access_token);
+                    if ($container_response && isset($container_response['id'])) {
+                        $final_container_id = $container_response['id'];
+                    }
+                }
+            }
+            
+            // If no media or media failed, create text-only container
+            if (empty($final_container_id)) {
+                $container_response = $this->create_threads_container($user_id, $thread_post_data, $access_token);
+                if (!$container_response || !isset($container_response['id'])) {
+                    error_log('WordPress to Threads: Failed to create thread part ' . ($index + 1) . ' container. Response: ' . print_r($container_response, true));
+                    return false;
+                }
+                $final_container_id = $container_response['id'];
+            }
+            
+            error_log('WordPress to Threads: Thread part ' . ($index + 1) . ' container created. ID: ' . $final_container_id);
+            
+            // Publish the container
+            $publish_response = $this->publish_threads_container($user_id, $final_container_id, $access_token);
+            
+            if (!$publish_response || !isset($publish_response['id'])) {
+                error_log('WordPress to Threads: Failed to publish thread part ' . ($index + 1) . '. Response: ' . print_r($publish_response, true));
+                return false;
+            }
+            
+            $published_post_id = $publish_response['id'];
+            $thread_post_ids[] = $published_post_id;
+            error_log('WordPress to Threads: Thread part ' . ($index + 1) . ' published successfully. ID: ' . $published_post_id);
+            
+            // Set this as the previous post ID for the next iteration
+            $previous_post_id = $published_post_id;
+            
+            // Add a small delay between posts to avoid rate limiting
+            if ($index < count($thread_parts) - 1) {
+                sleep(2);
+            }
+        }
+        
+        // Store thread chain information in post meta
+        update_post_meta($post->ID, '_threads_posted', '1');
+        update_post_meta($post->ID, '_threads_post_id', $thread_post_ids[0]); // Main post ID
+        update_post_meta($post->ID, '_threads_chain_ids', $thread_post_ids); // All post IDs
+        update_post_meta($post->ID, '_threads_chain_count', count($thread_post_ids));
+        
+        error_log('WordPress to Threads: Thread chain created successfully with ' . count($thread_post_ids) . ' posts');
+        return true;
     }
     
     private function shorten_url($url) {
@@ -698,6 +1015,8 @@ class ThreadsAutoPoster {
         foreach ($posts as $post) {
             $posted_status = get_post_meta($post->ID, '_threads_posted', true);
             $threads_post_id = get_post_meta($post->ID, '_threads_post_id', true);
+            $chain_ids = get_post_meta($post->ID, '_threads_chain_ids', true);
+            $chain_count = get_post_meta($post->ID, '_threads_chain_count', true);
             
             echo '<tr>';
             $display_title = $post->post_title;
@@ -714,7 +1033,10 @@ class ThreadsAutoPoster {
             
             if ($posted_status) {
                 echo '<td><span style="color: green;">✓ Posted</span>';
-                if ($threads_post_id) {
+                if ($chain_count && $chain_count > 1) {
+                    echo '<br><small>Thread chain (' . esc_html($chain_count) . ' posts)</small>';
+                    echo '<br><small>Main ID: ' . esc_html($threads_post_id) . '</small>';
+                } elseif ($threads_post_id) {
                     echo '<br><small>ID: ' . esc_html($threads_post_id) . '</small>';
                 }
                 echo '</td>';
