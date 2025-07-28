@@ -307,52 +307,54 @@ class ThreadsAutoPoster {
 
         // If there are media items
         if (!empty($media_items)) {
-            // Create containers for each individual media item (without text for now)
-            foreach ($media_items as $media_item) {
-                $media_type = $media_item['type'];
-                $media_url = $media_item['url'];
+            // Check if we have multiple media items (need carousel) or single media item
+            if (count($media_items) > 1) {
+                // Multiple media items: create individual containers first, then carousel
+                foreach ($media_items as $media_item) {
+                    $media_type = $media_item['type'];
+                    $media_url = $media_item['url'];
 
-                $media_specific_data = array(
-                    'media_type' => $media_type
-                );
-                if ($media_type === 'IMAGE') {
-                    $media_specific_data['image_url'] = $media_url;
-                } elseif ($media_type === 'VIDEO') {
-                    $media_specific_data['video_url'] = $media_url;
+                    $media_specific_data = array(
+                        'media_type' => $media_type
+                    );
+                    if ($media_type === 'IMAGE') {
+                        $media_specific_data['image_url'] = $media_url;
+                    } elseif ($media_type === 'VIDEO') {
+                        $media_specific_data['video_url'] = $media_url;
+                    }
+
+                    $container_response = $this->create_threads_container($user_id, $media_specific_data, $access_token);
+
+                    if ($container_response && isset($container_response['id'])) {
+                        $media_container_ids[] = $container_response['id'];
+                        error_log('WordPress to Threads: Media container created. ID: ' . $container_response['id']);
+                    } else {
+                        error_log('WordPress to Threads: Failed to create media container. Response: ' . print_r($container_response, true));
+                        // If any media container fails, clear all and fall back to text-only
+                        $media_container_ids = array();
+                        break;
+                    }
                 }
 
-                $container_response = $this->create_threads_container($user_id, $media_specific_data, $access_token);
-
-                if ($container_response && isset($container_response['id'])) {
-                    $media_container_ids[] = $container_response['id'];
-                    error_log('WordPress to Threads: Media container created. ID: ' . $container_response['id']);
-                } else {
-                    error_log('WordPress to Threads: Failed to create media container. Response: ' . print_r($container_response, true));
-                    // If any media container fails, clear all and fall back to text-only
-                    $media_container_ids = array();
-                    break;
+                // Create carousel album container with all media containers
+                if (!empty($media_container_ids)) {
+                    error_log('WordPress to Threads: Creating carousel album container with IDs: ' . implode(', ', $media_container_ids));
+                    $carousel_container_data = array(
+                        'media_type' => 'CAROUSEL',
+                        'children' => $media_container_ids,
+                        'text' => $post_content // Text for the entire carousel post
+                    );
+                    $container_response = $this->create_threads_container($user_id, $carousel_container_data, $access_token);
+                    if ($container_response && isset($container_response['id'])) {
+                        $final_container_id = $container_response['id'];
+                    } else {
+                        error_log('WordPress to Threads: Failed to create carousel album container. Response: ' . print_r($container_response, true));
+                        // Fallback to text-only if carousel creation fails
+                        $final_container_id = null;
+                    }
                 }
-            }
-
-            // Now, determine the final container to publish based on media count
-            if (count($media_container_ids) > 1) {
-                // Multiple media items: create a carousel album container
-                error_log('WordPress to Threads: Creating carousel album container with IDs: ' . implode(', ', $media_container_ids));
-                $carousel_container_data = array(
-                    'media_type' => 'CAROUSEL',
-                    'children' => $media_container_ids,
-                    'text' => $post_content // Text for the entire carousel post
-                );
-                $container_response = $this->create_threads_container($user_id, $carousel_container_data, $access_token);
-                if ($container_response && isset($container_response['id'])) {
-                    $final_container_id = $container_response['id'];
-                } else {
-                    error_log('WordPress to Threads: Failed to create carousel album container. Response: ' . print_r($container_response, true));
-                    // Fallback to text-only if carousel creation fails
-                    $final_container_id = null;
-                }
-            } elseif (count($media_container_ids) === 1) {
-                // Single media item: re-create the container with text
+            } elseif (count($media_items) === 1) {
+                // Single media item: create container with media and text directly
                 $media_item = $media_items[0]; // Get the first (and only) media item
                 $media_type = $media_item['type'];
                 $media_url = $media_item['url'];
@@ -399,7 +401,18 @@ class ThreadsAutoPoster {
 
         error_log('WordPress to Threads: Final container ID for publishing: ' . $final_container_id);
 
-        $publish_response = $this->publish_threads_container($user_id, $final_container_id, $access_token);
+        // Check if this is a video post that might need processing time
+        $has_video = false;
+        if (!empty($media_items)) {
+            foreach ($media_items as $media_item) {
+                if ($media_item['type'] === 'VIDEO') {
+                    $has_video = true;
+                    break;
+                }
+            }
+        }
+
+        $publish_response = $this->publish_threads_container($user_id, $final_container_id, $access_token, $has_video);
         
         if (!$publish_response || !isset($publish_response['id'])) {
             error_log('WordPress to Threads: Failed to publish container. Response: ' . print_r($publish_response, true));
@@ -620,45 +633,48 @@ class ThreadsAutoPoster {
             
             // Handle media for the first post only
             if ($is_first_post && !empty($media_items)) {
-                // Create containers for each individual media item
-                foreach ($media_items as $media_item) {
-                    $media_type = $media_item['type'];
-                    $media_url = $media_item['url'];
-                    
-                    $media_specific_data = array(
-                        'media_type' => $media_type
-                    );
-                    if ($media_type === 'IMAGE') {
-                        $media_specific_data['image_url'] = $media_url;
-                    } elseif ($media_type === 'VIDEO') {
-                        $media_specific_data['video_url'] = $media_url;
+                // Check if we have multiple media items (need carousel) or single media item
+                if (count($media_items) > 1) {
+                    // Multiple media items: create individual containers first, then carousel
+                    foreach ($media_items as $media_item) {
+                        $media_type = $media_item['type'];
+                        $media_url = $media_item['url'];
+                        
+                        $media_specific_data = array(
+                            'media_type' => $media_type
+                        );
+                        if ($media_type === 'IMAGE') {
+                            $media_specific_data['image_url'] = $media_url;
+                        } elseif ($media_type === 'VIDEO') {
+                            $media_specific_data['video_url'] = $media_url;
+                        }
+                        
+                        $container_response = $this->create_threads_container($user_id, $media_specific_data, $access_token);
+                        
+                        if ($container_response && isset($container_response['id'])) {
+                            $media_container_ids[] = $container_response['id'];
+                            error_log('WordPress to Threads: Media container created for thread part ' . ($index + 1) . '. ID: ' . $container_response['id']);
+                        } else {
+                            error_log('WordPress to Threads: Failed to create media container for thread part ' . ($index + 1) . '. Response: ' . print_r($container_response, true));
+                            $media_container_ids = array();
+                            break;
+                        }
                     }
                     
-                    $container_response = $this->create_threads_container($user_id, $media_specific_data, $access_token);
-                    
-                    if ($container_response && isset($container_response['id'])) {
-                        $media_container_ids[] = $container_response['id'];
-                        error_log('WordPress to Threads: Media container created for thread part ' . ($index + 1) . '. ID: ' . $container_response['id']);
-                    } else {
-                        error_log('WordPress to Threads: Failed to create media container for thread part ' . ($index + 1) . '. Response: ' . print_r($container_response, true));
-                        $media_container_ids = array();
-                        break;
+                    // Create carousel album container with all media containers
+                    if (!empty($media_container_ids)) {
+                        $carousel_container_data = array(
+                            'media_type' => 'CAROUSEL',
+                            'children' => $media_container_ids,
+                            'text' => $part_content
+                        );
+                        $container_response = $this->create_threads_container($user_id, $carousel_container_data, $access_token);
+                        if ($container_response && isset($container_response['id'])) {
+                            $final_container_id = $container_response['id'];
+                        }
                     }
-                }
-                
-                // Handle multiple media items with carousel
-                if (count($media_container_ids) > 1) {
-                    $carousel_container_data = array(
-                        'media_type' => 'CAROUSEL',
-                        'children' => $media_container_ids,
-                        'text' => $part_content
-                    );
-                    $container_response = $this->create_threads_container($user_id, $carousel_container_data, $access_token);
-                    if ($container_response && isset($container_response['id'])) {
-                        $final_container_id = $container_response['id'];
-                    }
-                } elseif (count($media_container_ids) === 1) {
-                    // Single media item: re-create the container with text
+                } elseif (count($media_items) === 1) {
+                    // Single media item: create container with media and text directly
                     $media_item = $media_items[0];
                     $media_type = $media_item['type'];
                     $media_url = $media_item['url'];
@@ -691,8 +707,9 @@ class ThreadsAutoPoster {
             
             error_log('WordPress to Threads: Thread part ' . ($index + 1) . ' container created. ID: ' . $final_container_id);
             
-            // Publish the container
-            $publish_response = $this->publish_threads_container($user_id, $final_container_id, $access_token);
+            // Publish the container (check for video in first post only)
+            $has_video = ($is_first_post && !empty($media_items)) ? in_array('VIDEO', array_column($media_items, 'type')) : false;
+            $publish_response = $this->publish_threads_container($user_id, $final_container_id, $access_token, $has_video);
             
             if (!$publish_response || !isset($publish_response['id'])) {
                 error_log('WordPress to Threads: Failed to publish thread part ' . ($index + 1) . '. Response: ' . print_r($publish_response, true));
@@ -936,7 +953,7 @@ class ThreadsAutoPoster {
         return json_decode($body, true);
     }
     
-    private function publish_threads_container($user_id, $container_id, $access_token) {
+    private function publish_threads_container($user_id, $container_id, $access_token, $has_video = false) {
         $api_url = "https://graph.threads.net/v1.0/{$user_id}/threads_publish";
         
         $data = array(
@@ -952,25 +969,64 @@ class ThreadsAutoPoster {
             'timeout' => 30
         );
         
-        $response = $this->make_authenticated_request($api_url, $args);
+        // For video posts, add delay and retry logic
+        $max_attempts = $has_video ? 3 : 1;
+        $delay_seconds = $has_video ? 5 : 0;
         
-        if (!$response) {
-            error_log('WordPress to Threads: Failed to publish container - authentication failed');
-            return false;
+        if ($has_video && $delay_seconds > 0) {
+            error_log('WordPress to Threads: Video detected, waiting ' . $delay_seconds . ' seconds for processing...');
+            sleep($delay_seconds);
         }
         
-        $response_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        $headers = wp_remote_retrieve_headers($response);
+        for ($attempt = 1; $attempt <= $max_attempts; $attempt++) {
+            error_log('WordPress to Threads: Publishing attempt ' . $attempt . ' of ' . $max_attempts);
+            
+            $response = $this->make_authenticated_request($api_url, $args);
+            
+            if (!$response) {
+                error_log('WordPress to Threads: Failed to publish container - authentication failed on attempt ' . $attempt);
+                if ($attempt === $max_attempts) {
+                    return false;
+                }
+                continue;
+            }
+            
+            $response_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            $headers = wp_remote_retrieve_headers($response);
+            
+            error_log('WordPress to Threads: Publish HTTP response code: ' . $response_code . ' (attempt ' . $attempt . ')');
+            error_log('WordPress to Threads: Publish raw response body: ' . $body);
+            if ($attempt === 1) {
+                error_log('WordPress to Threads: Publish response headers: ' . print_r($headers, true));
+            }
+            
+            $decoded_response = json_decode($body, true);
+            error_log('WordPress to Threads: Publish decoded response: ' . print_r($decoded_response, true));
+            
+            // Check if it's a media not found error (code 24, subcode 4279009)
+            if ($response_code === 400 && 
+                isset($decoded_response['error']['code']) && 
+                $decoded_response['error']['code'] === 24 && 
+                isset($decoded_response['error']['error_subcode']) && 
+                $decoded_response['error']['error_subcode'] === 4279009) {
+                
+                if ($attempt < $max_attempts) {
+                    $retry_delay = $attempt * 5; // Increasing delay: 5s, 10s
+                    error_log('WordPress to Threads: Media not found error, retrying in ' . $retry_delay . ' seconds...');
+                    sleep($retry_delay);
+                    continue;
+                } else {
+                    error_log('WordPress to Threads: Media not found error persisted after all retry attempts');
+                }
+            }
+            
+            // For successful responses or non-retryable errors, return immediately
+            return $decoded_response;
+        }
         
-        error_log('WordPress to Threads: Publish HTTP response code: ' . $response_code);
-        error_log('WordPress to Threads: Publish raw response body: ' . $body);
-        error_log('WordPress to Threads: Publish response headers: ' . print_r($headers, true));
-        
-        $decoded_response = json_decode($body, true);
-        error_log('WordPress to Threads: Publish decoded response: ' . print_r($decoded_response, true));
-        
-        return $decoded_response;
+        // This should never be reached, but just in case
+        return false;
     }
     
     
