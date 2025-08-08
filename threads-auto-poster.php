@@ -41,6 +41,7 @@ class ThreadsAutoPoster {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'admin_init'));
         add_action('wp_ajax_threads_manual_post', array($this, 'handle_manual_post'));
+        add_action('wp_ajax_threads_repost', array($this, 'handle_repost'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         add_action('threads_refresh_token', array($this, 'refresh_access_token'));
     }
@@ -488,10 +489,11 @@ class ThreadsAutoPoster {
         // Full text with title and content
         $full_text = $title . "\n\n" . $content;
         
-        // Calculate available characters for content (reserve space for URL at the end)
+        // Calculate available characters for content (reserve space for URL at the end and thread indicators)
         $url_space = strlen("\n\n" . $url_to_use);
-        $available_chars_last_post = $this->threads_character_limit - $url_space;
-        $available_chars_regular = $this->threads_character_limit;
+        $thread_indicator_space = 10; // Reserve space for "(X/Y)\n\n" - roughly 10 chars for most cases
+        $available_chars_last_post = $this->threads_character_limit - $url_space - $thread_indicator_space;
+        $available_chars_regular = $this->threads_character_limit - $thread_indicator_space;
         
         $thread_parts = array();
         $remaining_text = $full_text;
@@ -604,8 +606,18 @@ class ThreadsAutoPoster {
         
         error_log('WordPress to Threads: Creating thread chain with ' . count($thread_parts) . ' parts');
         
+        // Add thread numbering to each part for better user experience
+        $total_parts = count($thread_parts);
+        for ($i = 0; $i < $total_parts; $i++) {
+            $part_number = $i + 1;
+            $thread_indicator = "($part_number/$total_parts)";
+            
+            // Add thread indicator at the beginning of each post
+            $thread_parts[$i] = $thread_indicator . "\n\n" . $thread_parts[$i];
+        }
+        
         $thread_post_ids = array();
-        $previous_post_id = null;
+        $main_post_id = null;
         
         // Process each part of the thread
         foreach ($thread_parts as $index => $part_content) {
@@ -617,15 +629,15 @@ class ThreadsAutoPoster {
                 $media_items = $this->extract_post_images_and_videos($post);
             }
             
-            // Prepare the thread post data
+            // Prepare the thread post data - add reply_to_id for non-first posts
             $thread_post_data = array(
                 'media_type' => 'TEXT',
                 'text' => $part_content
             );
             
-            // Add reply_to_id for all posts except the first one
-            if (!$is_first_post && $previous_post_id) {
-                $thread_post_data['reply_to_id'] = $previous_post_id;
+            // For reply posts, add reply_to_id parameter
+            if (!$is_first_post && $main_post_id) {
+                $thread_post_data['reply_to_id'] = $main_post_id;
             }
             
             $media_container_ids = array();
@@ -718,14 +730,17 @@ class ThreadsAutoPoster {
             
             $published_post_id = $publish_response['id'];
             $thread_post_ids[] = $published_post_id;
-            error_log('WordPress to Threads: Thread part ' . ($index + 1) . ' published successfully. ID: ' . $published_post_id);
             
-            // Set this as the previous post ID for the next iteration
-            $previous_post_id = $published_post_id;
+            // Store the main post ID for subsequent replies
+            if ($is_first_post) {
+                $main_post_id = $published_post_id;
+            }
+            
+            error_log('WordPress to Threads: Thread part ' . ($index + 1) . ' published successfully. ID: ' . $published_post_id . ($is_first_post ? ' (main post)' : ' (reply to ' . $main_post_id . ')'));
             
             // Add a small delay between posts to avoid rate limiting
             if ($index < count($thread_parts) - 1) {
-                sleep(2);
+                sleep(3); // Slightly longer delay to ensure main post is fully processed before creating replies
             }
         }
         
@@ -735,7 +750,7 @@ class ThreadsAutoPoster {
         update_post_meta($post->ID, '_threads_chain_ids', $thread_post_ids); // All post IDs
         update_post_meta($post->ID, '_threads_chain_count', count($thread_post_ids));
         
-        error_log('WordPress to Threads: Thread chain created successfully with ' . count($thread_post_ids) . ' posts');
+        error_log('WordPress to Threads: Thread chain created successfully with ' . count($thread_post_ids) . ' posts (1 main + ' . (count($thread_post_ids) - 1) . ' replies)');
         return true;
     }
     
@@ -1096,7 +1111,7 @@ class ThreadsAutoPoster {
                     echo '<br><small>ID: ' . esc_html($threads_post_id) . '</small>';
                 }
                 echo '</td>';
-                echo '<td><button class="button threads-repost-btn" data-post-id="' . $post->ID . '" disabled>Re-post</button></td>';
+                echo '<td><button class="button threads-repost-btn" data-post-id="' . $post->ID . '">Re-post</button></td>';
             } else {
                 echo '<td><span style="color: orange;">Not posted</span></td>';
                 echo '<td><button class="button button-primary threads-post-btn" data-post-id="' . $post->ID . '">Post to Threads</button></td>';
@@ -1203,6 +1218,73 @@ class ThreadsAutoPoster {
         }
     }
     
+    public function handle_repost() {
+        error_log('WordPress to Threads: handle_repost called');
+        error_log('WordPress to Threads: POST data: ' . print_r($_POST, true));
+        
+        if (!isset($_POST['nonce'])) {
+            error_log('WordPress to Threads: No nonce provided');
+            wp_send_json_error('No security token provided');
+            return;
+        }
+        
+        if (!wp_verify_nonce($_POST['nonce'], 'threads_manual_post_nonce')) {
+            error_log('WordPress to Threads: Nonce verification failed');
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        if (!current_user_can('manage_options')) {
+            error_log('WordPress to Threads: User lacks permissions');
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        if (!isset($_POST['post_id'])) {
+            error_log('WordPress to Threads: No post_id provided');
+            wp_send_json_error('No post ID provided');
+            return;
+        }
+        
+        $post_id = intval($_POST['post_id']);
+        error_log('WordPress to Threads: Processing re-post for post ID: ' . $post_id);
+        
+        $post = get_post($post_id);
+        
+        if (!$post || $post->post_type !== 'post') {
+            error_log('WordPress to Threads: Invalid post or post type');
+            wp_send_json_error('Invalid post');
+            return;
+        }
+        
+        // Check authentication
+        $access_token = get_option('threads_access_token');
+        $user_id = get_option('threads_user_id');
+        
+        if (empty($access_token) || empty($user_id)) {
+            error_log('WordPress to Threads: Missing authentication credentials');
+            wp_send_json_error('Plugin not properly authorized. Please re-authorize in settings.');
+            return;
+        }
+        
+        // Clear the existing post metadata to allow re-posting
+        delete_post_meta($post_id, '_threads_posted');
+        delete_post_meta($post_id, '_threads_post_id');
+        delete_post_meta($post_id, '_threads_chain_ids');
+        delete_post_meta($post_id, '_threads_chain_count');
+        
+        error_log('WordPress to Threads: Attempting to re-post to Threads');
+        $result = $this->post_to_threads($post);
+        
+        if ($result) {
+            error_log('WordPress to Threads: Successfully re-posted to Threads');
+            wp_send_json_success('Post successfully re-shared to Threads!');
+        } else {
+            error_log('WordPress to Threads: Failed to re-post to Threads');
+            wp_send_json_error('Failed to re-post to Threads. Check error logs for details.');
+        }
+    }
+    
     public function handle_oauth_endpoints() {
         if (isset($_GET['threads_oauth_action'])) {
             error_log('Threads OAuth Debug: Found threads_oauth_action = ' . $_GET['threads_oauth_action']);
@@ -1236,7 +1318,7 @@ class ThreadsAutoPoster {
         $params = array(
             'client_id' => $app_id,
             'redirect_uri' => $redirect_uri,
-            'scope' => 'threads_basic,threads_content_publish',
+            'scope' => 'threads_basic,threads_content_publish,threads_manage_replies',
             'response_type' => 'code',
             'state' => $state
         );
