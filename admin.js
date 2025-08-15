@@ -2,6 +2,29 @@ jQuery(document).ready(function($) {
     console.log('WordPress to Threads admin script loaded');
     console.log('threads_ajax object:', threads_ajax);
     
+    // Handle thread chain options visibility
+    function toggleThreadChainOptions() {
+        var isEnabled = $('input[name="threads_enable_thread_chains"]').is(':checked');
+        var maxChainRow = $('select[name="threads_max_chain_length"]').closest('tr');
+        var splitMethodRow = $('select[name="threads_split_preference"]').closest('tr');
+        
+        if (isEnabled) {
+            maxChainRow.show();
+            splitMethodRow.show();
+        } else {
+            maxChainRow.hide();
+            splitMethodRow.hide();
+        }
+    }
+    
+    // Initialize visibility on page load
+    toggleThreadChainOptions();
+    
+    // Toggle visibility when checkbox changes
+    $('input[name="threads_enable_thread_chains"]').on('change', function() {
+        toggleThreadChainOptions();
+    });
+    
     $('.threads-post-btn').on('click', function(e) {
         e.preventDefault();
         console.log('Post button clicked');
