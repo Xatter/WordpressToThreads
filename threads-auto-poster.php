@@ -42,8 +42,15 @@ class ThreadsAutoPoster {
         add_action('admin_init', array($this, 'admin_init'));
         add_action('wp_ajax_threads_manual_post', array($this, 'handle_manual_post'));
         add_action('wp_ajax_threads_repost', array($this, 'handle_repost'));
+        add_action('wp_ajax_threads_store_publish_choice', array($this, 'handle_store_publish_choice'));
+        add_action('wp_ajax_threads_retry_all_pending', array($this, 'handle_retry_all_pending'));
+        add_action('wp_ajax_threads_retry_single_pending', array($this, 'handle_retry_single_pending'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         add_action('threads_refresh_token', array($this, 'refresh_access_token'));
+        add_action('admin_notices', array($this, 'show_authorization_notices'));
+        
+        // Ensure cron job is scheduled if we have tokens
+        $this->ensure_token_refresh_scheduled();
     }
     
     public function activate() {
@@ -82,12 +89,14 @@ class ThreadsAutoPoster {
     }
     
     public function add_admin_menu() {
-        add_options_page(
+        add_menu_page(
             'WordPress to Threads Settings',
-            'WordPress to Threads',
+            'Threads',
             'manage_options',
             'wordpress-to-threads',
-            array($this, 'admin_page')
+            array($this, 'admin_page'),
+            'dashicons-share',
+            30
         );
     }
     
@@ -234,6 +243,8 @@ class ThreadsAutoPoster {
                 <?php submit_button(); ?>
             </form>
             
+            <?php $this->display_pending_posts_section(); ?>
+            
             <h2>Manual Post to Threads</h2>
             <p>Select posts to manually post to Threads:</p>
             
@@ -255,10 +266,50 @@ class ThreadsAutoPoster {
             return;
         }
         
-        $this->post_to_threads($post);
+        // Check if user made a specific choice during publishing
+        $publish_choice = get_post_meta($post_id, '_threads_publish_choice', true);
+        
+        if ($publish_choice === 'none') {
+            // User chose not to post to Threads
+            return;
+        }
+        
+        $result = false;
+        if ($publish_choice === 'single') {
+            // Force single post mode
+            $result = $this->post_to_threads($post, 'single');
+        } elseif ($publish_choice === 'chain') {
+            // Force chain mode
+            $result = $this->post_to_threads($post, 'chain');
+        } else {
+            // No choice stored, use default behavior
+            $result = $this->post_to_threads($post);
+        }
+        
+        // Handle posting failures
+        if (!$result) {
+            // Check if it's an authorization issue
+            $access_token = get_option('threads_access_token');
+            $user_id = get_option('threads_user_id');
+            
+            if (empty($access_token) || empty($user_id)) {
+                error_log('WordPress to Threads: Auto-posting failed due to missing authorization for post ID: ' . $post_id);
+                // Store this post as needing authorization
+                $this->store_pending_post($post_id, $publish_choice ?: 'auto');
+                // Set a transient to show admin notice
+                set_transient('threads_auth_needed_notice', true, DAY_IN_SECONDS);
+            } else {
+                error_log('WordPress to Threads: Auto-posting failed for post ID: ' . $post_id . ' - not an authorization issue');
+            }
+        } else {
+            // Clean up the choice after successful posting
+            delete_post_meta($post_id, '_threads_publish_choice');
+            // Remove from pending posts if it was there
+            $this->remove_pending_post($post_id);
+        }
     }
     
-    public function post_to_threads($post) {
+    public function post_to_threads($post, $force_mode = null) {
         $user_id = get_option('threads_user_id');
         
         if (empty($user_id)) {
@@ -273,15 +324,24 @@ class ThreadsAutoPoster {
             return false;
         }
         
-        // Check if we should use thread chains for long content
-        $enable_thread_chains = get_option('threads_enable_thread_chains', '1') === '1';
-        $title = $post->post_title;
-        $content = wp_strip_all_tags($post->post_content);
-        $full_text = $title . "\n\n" . $content;
-        
-        if ($enable_thread_chains && strlen($full_text) > $this->threads_character_limit) {
-            error_log('WordPress to Threads: Content exceeds character limit, using thread chain');
+        // Check if user forced a specific posting mode
+        if ($force_mode === 'chain') {
+            error_log('WordPress to Threads: User forced thread chain mode');
             return $this->create_thread_chain($post);
+        } elseif ($force_mode === 'single') {
+            error_log('WordPress to Threads: User forced single post mode');
+            // Skip the length check and go straight to single post
+        } else {
+            // Check if we should use thread chains for long content (default behavior)
+            $enable_thread_chains = get_option('threads_enable_thread_chains', '1') === '1';
+            $title = $post->post_title;
+            $content = wp_strip_all_tags($post->post_content);
+            $full_text = $title . "\n\n" . $content;
+            
+            if ($enable_thread_chains && strlen($full_text) > $this->threads_character_limit) {
+                error_log('WordPress to Threads: Content exceeds character limit, using thread chain');
+                return $this->create_thread_chain($post);
+            }
         }
         
         // Use original single-post method for shorter content
@@ -1046,15 +1106,24 @@ class ThreadsAutoPoster {
     
     
     public function enqueue_admin_scripts($hook) {
-        if ($hook !== 'settings_page_wordpress-to-threads') {
-            return;
+        // Load admin script on settings page
+        if ($hook === 'toplevel_page_wordpress-to-threads') {
+            wp_enqueue_script('wordpress-to-threads-admin', WORDPRESS_TO_THREADS_PLUGIN_URL . 'admin.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
+            wp_localize_script('wordpress-to-threads-admin', 'threads_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('threads_manual_post_nonce')
+            ));
         }
         
-        wp_enqueue_script('wordpress-to-threads-admin', WORDPRESS_TO_THREADS_PLUGIN_URL . 'admin.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
-        wp_localize_script('wordpress-to-threads-admin', 'threads_ajax', array(
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('threads_manual_post_nonce')
-        ));
+        // Load publish confirmation script on post edit pages
+        if ($hook === 'post.php' || $hook === 'post-new.php') {
+            wp_enqueue_script('wordpress-to-threads-publish', WORDPRESS_TO_THREADS_PLUGIN_URL . 'publish-confirm.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
+            wp_localize_script('wordpress-to-threads-publish', 'threads_publish_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('threads_publish_confirm_nonce'),
+                'auto_post_enabled' => get_option('threads_auto_post_enabled', false)
+            ));
+        }
     }
     
     public function display_manual_post_section() {
@@ -1285,6 +1354,36 @@ class ThreadsAutoPoster {
         }
     }
     
+    public function handle_store_publish_choice() {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'threads_publish_confirm_nonce')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        if (!isset($_POST['post_id']) || !isset($_POST['choice'])) {
+            wp_send_json_error('Missing required parameters');
+            return;
+        }
+        
+        $post_id = intval($_POST['post_id']);
+        $choice = sanitize_text_field($_POST['choice']);
+        
+        if (!in_array($choice, ['single', 'chain', 'none'])) {
+            wp_send_json_error('Invalid choice');
+            return;
+        }
+        
+        // Store the user's choice temporarily
+        update_post_meta($post_id, '_threads_publish_choice', $choice);
+        
+        wp_send_json_success('Choice stored');
+    }
+    
     public function handle_oauth_endpoints() {
         if (isset($_GET['threads_oauth_action'])) {
             error_log('Threads OAuth Debug: Found threads_oauth_action = ' . $_GET['threads_oauth_action']);
@@ -1382,15 +1481,18 @@ class ThreadsAutoPoster {
                     error_log('Threads OAuth Debug: Updated user ID');
                 }
                 
+                // Retry any pending posts after successful authorization
+                $this->retry_pending_posts();
+                
                 error_log('Threads OAuth Debug: Redirecting to settings with success');
-                wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&authorized=1'));
+                wp_redirect(admin_url('admin.php?page=wordpress-to-threads&authorized=1'));
             } else {
                 error_log('Threads OAuth Debug: Long-term token exchange failed, redirecting with error');
-                wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&error=1'));
+                wp_redirect(admin_url('admin.php?page=wordpress-to-threads&error=1'));
             }
         } else {
             error_log('Threads OAuth Debug: Short-term token exchange failed, redirecting with error');
-            wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&error=1'));
+            wp_redirect(admin_url('admin.php?page=wordpress-to-threads&error=1'));
         }
         exit;
     }
@@ -1648,6 +1750,21 @@ class ThreadsAutoPoster {
         return (time() + $buffer_time) >= $expires_at;
     }
     
+    private function ensure_token_refresh_scheduled() {
+        // Only schedule cron if we have valid tokens
+        $access_token = get_option('threads_access_token');
+        if (empty($access_token)) {
+            return;
+        }
+        
+        // Check if cron is already scheduled
+        if (!wp_next_scheduled('threads_refresh_token')) {
+            // Schedule every 12 hours (43200 seconds) starting now
+            wp_schedule_event(time(), 'twicedaily', 'threads_refresh_token');
+            error_log('WordPress to Threads: Token refresh cron job scheduled');
+        }
+    }
+    
     private function ensure_valid_token() {
         // First check if we have any token at all
         $current_token = get_option('threads_access_token');
@@ -1773,6 +1890,277 @@ class ThreadsAutoPoster {
         );
         
         error_log('WordPress to Threads: Deleted data for user ' . $user_id);
+    }
+    
+    private function store_pending_post($post_id, $mode) {
+        $pending_posts = get_option('threads_pending_posts', array());
+        $pending_posts[$post_id] = array(
+            'mode' => $mode,
+            'timestamp' => time(),
+            'title' => get_the_title($post_id)
+        );
+        update_option('threads_pending_posts', $pending_posts);
+        error_log('WordPress to Threads: Stored pending post ID: ' . $post_id . ' with mode: ' . $mode);
+    }
+    
+    private function remove_pending_post($post_id) {
+        $pending_posts = get_option('threads_pending_posts', array());
+        if (isset($pending_posts[$post_id])) {
+            unset($pending_posts[$post_id]);
+            update_option('threads_pending_posts', $pending_posts);
+            error_log('WordPress to Threads: Removed pending post ID: ' . $post_id);
+        }
+    }
+    
+    public function show_authorization_notices() {
+        // Show notice if authorization is needed
+        if (get_transient('threads_auth_needed_notice')) {
+            $pending_posts = get_option('threads_pending_posts', array());
+            $count = count($pending_posts);
+            
+            if ($count > 0) {
+                echo '<div class="notice notice-warning is-dismissible">';
+                echo '<p><strong>Threads Auto Poster:</strong> Failed to post ' . $count . ' blog post(s) to Threads due to missing authorization. ';
+                echo '<a href="' . admin_url('admin.php?page=wordpress-to-threads') . '">Please re-authorize the plugin</a> to resume posting.</p>';
+                echo '</div>';
+            }
+            
+            delete_transient('threads_auth_needed_notice');
+        }
+    }
+    
+    public function retry_pending_posts() {
+        $pending_posts = get_option('threads_pending_posts', array());
+        
+        if (empty($pending_posts)) {
+            return;
+        }
+        
+        error_log('WordPress to Threads: Retrying ' . count($pending_posts) . ' pending posts');
+        
+        foreach ($pending_posts as $post_id => $data) {
+            $post = get_post($post_id);
+            
+            if (!$post || $post->post_status !== 'publish') {
+                // Post no longer exists or isn't published, remove from pending
+                $this->remove_pending_post($post_id);
+                continue;
+            }
+            
+            // Check if already posted (might have been posted manually)
+            if (get_post_meta($post_id, '_threads_posted', true)) {
+                $this->remove_pending_post($post_id);
+                continue;
+            }
+            
+            // Attempt to post
+            $mode = $data['mode'];
+            $result = false;
+            
+            if ($mode === 'single') {
+                $result = $this->post_to_threads($post, 'single');
+            } elseif ($mode === 'chain') {
+                $result = $this->post_to_threads($post, 'chain');
+            } else {
+                $result = $this->post_to_threads($post);
+            }
+            
+            if ($result) {
+                $this->remove_pending_post($post_id);
+                error_log('WordPress to Threads: Successfully posted pending post ID: ' . $post_id);
+            } else {
+                error_log('WordPress to Threads: Failed to post pending post ID: ' . $post_id);
+            }
+        }
+    }
+    
+    public function display_pending_posts_section() {
+        $pending_posts = get_option('threads_pending_posts', array());
+        
+        if (empty($pending_posts)) {
+            return; // Don't show section if no pending posts
+        }
+        
+        ?>
+        <h2>Pending Posts</h2>
+        <p>The following posts failed to post to Threads due to authorization issues:</p>
+        
+        <div id="pending-posts-results"></div>
+        
+        <table class="wp-list-table widefat fixed striped">
+            <thead>
+                <tr>
+                    <th scope="col">Post Title</th>
+                    <th scope="col">Failed Date</th>
+                    <th scope="col">Mode</th>
+                    <th scope="col">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($pending_posts as $post_id => $data): ?>
+                    <?php $post = get_post($post_id); ?>
+                    <?php if ($post): ?>
+                    <tr>
+                        <td>
+                            <strong><?php echo esc_html($post->post_title); ?></strong><br>
+                            <small><a href="<?php echo get_edit_post_link($post_id); ?>">Edit</a> | 
+                            <a href="<?php echo get_permalink($post_id); ?>" target="_blank">View</a></small>
+                        </td>
+                        <td><?php echo date('Y-m-d H:i:s', $data['timestamp']); ?></td>
+                        <td>
+                            <?php 
+                            switch($data['mode']) {
+                                case 'single': echo 'Single Post'; break;
+                                case 'chain': echo 'Thread Chain'; break;
+                                default: echo 'Auto'; break;
+                            }
+                            ?>
+                        </td>
+                        <td>
+                            <button type="button" class="button threads-retry-btn" data-post-id="<?php echo $post_id; ?>">
+                                Retry Now
+                            </button>
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        
+        <p>
+            <button type="button" class="button button-primary" onclick="retryAllPendingPosts()">
+                Retry All Pending Posts
+            </button>
+        </p>
+        
+        <script>
+        function retryAllPendingPosts() {
+            jQuery.ajax({
+                url: threads_ajax.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'threads_retry_all_pending',
+                    nonce: threads_ajax.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert('Error: ' + response.data);
+                    }
+                },
+                error: function() {
+                    alert('Network error occurred');
+                }
+            });
+        }
+        
+        jQuery(document).ready(function($) {
+            $('.threads-retry-btn').on('click', function() {
+                var button = $(this);
+                var postId = button.data('post-id');
+                
+                button.prop('disabled', true).text('Retrying...');
+                
+                $.ajax({
+                    url: threads_ajax.ajax_url,
+                    type: 'POST',
+                    data: {
+                        action: 'threads_retry_single_pending',
+                        post_id: postId,
+                        nonce: threads_ajax.nonce
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            location.reload();
+                        } else {
+                            button.prop('disabled', false).text('Retry Now');
+                            alert('Error: ' + response.data);
+                        }
+                    },
+                    error: function() {
+                        button.prop('disabled', false).text('Retry Now');
+                        alert('Network error occurred');
+                    }
+                });
+            });
+        });
+        </script>
+        <?php
+    }
+    
+    public function handle_retry_all_pending() {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'threads_manual_post_nonce')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        $this->retry_pending_posts();
+        wp_send_json_success('Pending posts retry attempted');
+    }
+    
+    public function handle_retry_single_pending() {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'threads_manual_post_nonce')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        if (!isset($_POST['post_id'])) {
+            wp_send_json_error('No post ID provided');
+            return;
+        }
+        
+        $post_id = intval($_POST['post_id']);
+        $pending_posts = get_option('threads_pending_posts', array());
+        
+        if (!isset($pending_posts[$post_id])) {
+            wp_send_json_error('Post not found in pending list');
+            return;
+        }
+        
+        $post = get_post($post_id);
+        if (!$post || $post->post_status !== 'publish') {
+            $this->remove_pending_post($post_id);
+            wp_send_json_error('Post no longer exists or is not published');
+            return;
+        }
+        
+        // Check if already posted
+        if (get_post_meta($post_id, '_threads_posted', true)) {
+            $this->remove_pending_post($post_id);
+            wp_send_json_success('Post was already posted to Threads');
+            return;
+        }
+        
+        // Attempt to post
+        $data = $pending_posts[$post_id];
+        $mode = $data['mode'];
+        $result = false;
+        
+        if ($mode === 'single') {
+            $result = $this->post_to_threads($post, 'single');
+        } elseif ($mode === 'chain') {
+            $result = $this->post_to_threads($post, 'chain');
+        } else {
+            $result = $this->post_to_threads($post);
+        }
+        
+        if ($result) {
+            $this->remove_pending_post($post_id);
+            wp_send_json_success('Post successfully shared to Threads');
+        } else {
+            wp_send_json_error('Failed to post to Threads. Check error logs for details.');
+        }
     }
 }
 

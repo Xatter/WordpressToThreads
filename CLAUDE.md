@@ -86,3 +86,4 @@ This is a WordPress plugin called "Threads Auto Poster" that automatically posts
 ## Development Environment
 
 - This project uses Docker for php
+- This project uses docker for both wordpress and php

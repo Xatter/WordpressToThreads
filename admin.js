@@ -66,6 +66,73 @@ jQuery(document).ready(function($) {
         });
     });
     
+    // Re-post button handler
+    $('.threads-repost-btn').on('click', function(e) {
+        e.preventDefault();
+        console.log('Re-post button clicked');
+        
+        var button = $(this);
+        var postId = button.data('post-id');
+        var row = button.closest('tr');
+        
+        console.log('Re-post Post ID:', postId);
+        
+        if (!postId) {
+            alert('Error: No post ID found');
+            return;
+        }
+        
+        if (typeof threads_ajax === 'undefined') {
+            alert('Error: AJAX configuration not loaded');
+            return;
+        }
+        
+        // Confirm re-posting
+        if (!confirm('Are you sure you want to re-post this to Threads? This will create a new post even if it was already shared.')) {
+            return;
+        }
+        
+        button.prop('disabled', true).text('Re-posting...');
+        
+        var ajaxData = {
+            action: 'threads_repost',
+            post_id: postId,
+            nonce: threads_ajax.nonce
+        };
+        
+        console.log('Re-post AJAX data:', ajaxData);
+        
+        $.ajax({
+            url: threads_ajax.ajax_url,
+            type: 'POST',
+            data: ajaxData,
+            success: function(response) {
+                console.log('Re-post AJAX Success Response:', response);
+                
+                if (response.success) {
+                    // Reload the page to show updated status
+                    location.reload();
+                } else {
+                    button.prop('disabled', false).text('Re-post');
+                    
+                    $('#threads-post-results').prepend(
+                        '<div class="notice notice-error is-dismissible"><p>Error: ' + 
+                        response.data + '</p></div>'
+                    );
+                }
+            },
+            error: function(xhr, status, error) {
+                console.log('Re-post AJAX Error:', {xhr: xhr, status: status, error: error});
+                
+                button.prop('disabled', false).text('Re-post');
+                
+                $('#threads-post-results').prepend(
+                    '<div class="notice notice-error is-dismissible"><p>Network error: ' + error + ' (Status: ' + status + ')</p></div>'
+                );
+            }
+        });
+    });
+    
     $(document).on('click', '.notice-dismiss', function() {
         $(this).closest('.notice').fadeOut();
     });
