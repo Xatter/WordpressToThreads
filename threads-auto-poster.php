@@ -548,9 +548,8 @@ class ThreadsAutoPoster {
         
         // Calculate available characters for content (reserve space for URL at the end and thread indicators)
         $url_space = strlen("\n\n" . $url_to_use);
-        $thread_indicator_space = 10; // Reserve space for "(X/Y)\n\n" - roughly 10 chars for most cases
-        $available_chars_last_post = $this->threads_character_limit - $url_space - $thread_indicator_space;
-        $available_chars_regular = $this->threads_character_limit - $thread_indicator_space;
+        $available_chars_last_post = $this->threads_character_limit - $url_space;
+        $available_chars_regular = $this->threads_character_limit;
         
         $thread_parts = array();
         $remaining_text = $full_text;
@@ -663,18 +662,10 @@ class ThreadsAutoPoster {
         
         error_log('WordPress to Threads: Creating thread chain with ' . count($thread_parts) . ' parts');
         
-        // Add thread numbering to each part for better user experience
-        $total_parts = count($thread_parts);
-        for ($i = 0; $i < $total_parts; $i++) {
-            $part_number = $i + 1;
-            $thread_indicator = "($part_number/$total_parts)";
-            
-            // Add thread indicator at the beginning of each post
-            $thread_parts[$i] = $thread_indicator . "\n\n" . $thread_parts[$i];
-        }
         
         $thread_post_ids = array();
         $main_post_id = null;
+        $previous_post_id = null;
         
         // Process each part of the thread
         foreach ($thread_parts as $index => $part_content) {
@@ -692,9 +683,9 @@ class ThreadsAutoPoster {
                 'text' => $part_content
             );
             
-            // For reply posts, add reply_to_id parameter
-            if (!$is_first_post && $main_post_id) {
-                $thread_post_data['reply_to_id'] = $main_post_id;
+            // For reply posts, add reply_to_id parameter (reply to previous post in chain)
+            if (!$is_first_post && $previous_post_id) {
+                $thread_post_data['reply_to_id'] = $previous_post_id;
             }
             
             $media_container_ids = array();
@@ -788,12 +779,13 @@ class ThreadsAutoPoster {
             $published_post_id = $publish_response['id'];
             $thread_post_ids[] = $published_post_id;
             
-            // Store the main post ID for subsequent replies
+            // Store the main post ID and update previous post ID for sequential replies
             if ($is_first_post) {
                 $main_post_id = $published_post_id;
             }
+            $previous_post_id = $published_post_id;
             
-            error_log('WordPress to Threads: Thread part ' . ($index + 1) . ' published successfully. ID: ' . $published_post_id . ($is_first_post ? ' (main post)' : ' (reply to ' . $main_post_id . ')'));
+            error_log('WordPress to Threads: Thread part ' . ($index + 1) . ' published successfully. ID: ' . $published_post_id . ($is_first_post ? ' (main post)' : ' (reply to previous post)'));
             
             // Add a small delay between posts to avoid rate limiting
             if ($index < count($thread_parts) - 1) {
@@ -807,7 +799,7 @@ class ThreadsAutoPoster {
         update_post_meta($post->ID, '_threads_chain_ids', $thread_post_ids); // All post IDs
         update_post_meta($post->ID, '_threads_chain_count', count($thread_post_ids));
         
-        error_log('WordPress to Threads: Thread chain created successfully with ' . count($thread_post_ids) . ' posts (1 main + ' . (count($thread_post_ids) - 1) . ' replies)');
+        error_log('WordPress to Threads: Sequential thread chain created successfully with ' . count($thread_post_ids) . ' posts');
         return true;
     }
     
