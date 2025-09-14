@@ -103,13 +103,10 @@ class ThreadsAutoPoster {
     public function admin_init() {
         register_setting('wordpress_to_threads_settings', 'threads_app_id');
         register_setting('wordpress_to_threads_settings', 'threads_app_secret');
-        register_setting('wordpress_to_threads_settings', 'threads_user_id');
-        register_setting('wordpress_to_threads_settings', 'threads_access_token');
         register_setting('wordpress_to_threads_settings', 'bitly_access_token');
         register_setting('wordpress_to_threads_settings', 'threads_auto_post_enabled');
         register_setting('wordpress_to_threads_settings', 'threads_include_media');
         register_setting('wordpress_to_threads_settings', 'threads_media_priority');
-        register_setting('wordpress_to_threads_settings', 'threads_token_expires');
         register_setting('wordpress_to_threads_settings', 'threads_enable_thread_chains');
         register_setting('wordpress_to_threads_settings', 'threads_max_chain_length');
         register_setting('wordpress_to_threads_settings', 'threads_split_preference');
@@ -1398,6 +1395,9 @@ class ThreadsAutoPoster {
                 case 'data_deletion':
                     $this->handle_data_deletion();
                     break;
+                case 'debug':
+                    $this->handle_debug_info();
+                    break;
             }
         }
     }
@@ -2161,6 +2161,39 @@ class ThreadsAutoPoster {
         } else {
             wp_send_json_error('Failed to post to Threads. Check error logs for details.');
         }
+    }
+
+    public function handle_debug_info() {
+        header('Content-Type: text/plain');
+        echo "=== Threads OAuth Debug Info ===\n\n";
+        
+        echo "Site URL: " . home_url() . "\n";
+        echo "Redirect URI: " . $this->get_redirect_uri() . "\n\n";
+        
+        echo "Configuration:\n";
+        echo "- App ID: " . (get_option('threads_app_id') ? 'SET (length: ' . strlen(get_option('threads_app_id')) . ')' : 'NOT SET') . "\n";
+        echo "- App Secret: " . (get_option('threads_app_secret') ? 'SET (length: ' . strlen(get_option('threads_app_secret')) . ')' : 'NOT SET') . "\n";
+        echo "- Access Token: " . (get_option('threads_access_token') ? 'SET (length: ' . strlen(get_option('threads_access_token')) . ')' : 'NOT SET') . "\n";
+        echo "- User ID: " . (get_option('threads_user_id') ? get_option('threads_user_id') : 'NOT SET') . "\n";
+        
+        $expires = get_option('threads_token_expires');
+        if ($expires) {
+            echo "- Token Expires: " . date('Y-m-d H:i:s', $expires) . " (" . ($expires > time() ? 'Valid' : 'EXPIRED') . ")\n";
+        } else {
+            echo "- Token Expires: NOT SET\n";
+        }
+        
+        echo "\nOAuth State:\n";
+        $oauth_state = get_transient('threads_oauth_state');
+        echo "- Current State: " . ($oauth_state ? $oauth_state : 'NONE') . "\n";
+        
+        echo "\nTesting Callback URL:\n";
+        $callback_url = $this->get_redirect_uri() . '&code=test&state=test';
+        echo "- Callback URL: " . $callback_url . "\n";
+        echo "- Test this URL to see if it's accessible\n";
+        
+        echo "\n=== End Debug Info ===\n";
+        exit;
     }
 }
 
