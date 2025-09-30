@@ -499,8 +499,8 @@ class ThreadsAutoPoster {
         $post_url = get_permalink($post->ID);
         
         $full_text = $title . "\n\n" . $content;
-        
-        if (strlen($full_text) <= $this->threads_character_limit) {
+
+        if (strlen($full_text) < $this->threads_character_limit) {
             return $full_text;
         }
         
