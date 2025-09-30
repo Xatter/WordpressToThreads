@@ -1,0 +1,39 @@
+/* Styling for post columns */
+.fixed .column-is_threads_posted {
+	width: 50px;
+	vertical-align: top;
+}
+
+.fixed .column-is_threads_posted a {
+	padding: 0;
+}
+
+.fixed .column-is_threads_posted a:focus {
+	box-shadow: unset;
+}
+
+.threads-status-logo::before {
+	background-image: url('../images/threads_default.svg');
+	background-repeat: no-repeat;
+	background-size: 24px 24px;
+	content: ' ';
+	display: block;
+	height: 24px;
+	width: 24px;
+}
+
+tbody .threads-status-logo--posted::before {
+	background-image: url('../images/threads_posted.svg');
+}
+
+tbody .threads-status-logo--error::before {
+	background-image: url('../images/threads_error.svg');
+}
+
+tbody .threads-status-logo--enabled::before {
+	background-image: url('../images/threads_enabled.svg');
+}
+
+tbody .threads-status-logo--disabled::before {
+	background-image: url('../images/threads_disabled.svg');
+}

@@ -48,7 +48,11 @@ class ThreadsAutoPoster {
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         add_action('threads_refresh_token', array($this, 'refresh_access_token'));
         add_action('admin_notices', array($this, 'show_authorization_notices'));
-        
+
+        // Add Threads status column to posts list
+        add_filter('manage_post_posts_columns', array($this, 'add_threads_status_column'));
+        add_action('manage_post_posts_custom_column', array($this, 'display_threads_status_column'), 10, 2);
+
         // Ensure cron job is scheduled if we have tokens
         $this->ensure_token_refresh_scheduled();
     }
@@ -1095,6 +1099,11 @@ class ThreadsAutoPoster {
     
     
     public function enqueue_admin_scripts($hook) {
+        // Load CSS for posts list column
+        if ($hook === 'edit.php') {
+            wp_enqueue_style('threads-admin-css', WORDPRESS_TO_THREADS_PLUGIN_URL . 'css/admin-threads.css', array(), WORDPRESS_TO_THREADS_VERSION);
+        }
+
         // Load admin script on settings page
         if ($hook === 'toplevel_page_wordpress-to-threads') {
             wp_enqueue_script('wordpress-to-threads-admin', WORDPRESS_TO_THREADS_PLUGIN_URL . 'admin.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
@@ -1103,7 +1112,7 @@ class ThreadsAutoPoster {
                 'nonce' => wp_create_nonce('threads_manual_post_nonce')
             ));
         }
-        
+
         // Load publish confirmation script on post edit pages
         if ($hook === 'post.php' || $hook === 'post-new.php') {
             wp_enqueue_script('wordpress-to-threads-publish', WORDPRESS_TO_THREADS_PLUGIN_URL . 'publish-confirm.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
@@ -2186,6 +2195,62 @@ class ThreadsAutoPoster {
         
         echo "\n=== End Debug Info ===\n";
         exit;
+    }
+
+    /**
+     * Add Threads status column to posts list
+     */
+    public function add_threads_status_column($columns) {
+        // Remove date column temporarily
+        unset($columns['date']);
+
+        // Add Threads status column
+        $columns['is_threads_posted'] = sprintf(
+            '<span class="threads-status-logo" title="%s"><span class="screen-reader-text">%s</span></span>',
+            esc_attr__('Threads status', 'threads-auto-poster'),
+            esc_html__('Posted to Threads status', 'threads-auto-poster')
+        );
+
+        // Add date column back
+        $columns['date'] = esc_html__('Date', 'threads-auto-poster');
+
+        return $columns;
+    }
+
+    /**
+     * Display Threads status in posts list column
+     */
+    public function display_threads_status_column($column_name, $post_id) {
+        if ('is_threads_posted' !== $column_name) {
+            return;
+        }
+
+        $post_status = get_post_status($post_id);
+        $threads_posted = get_post_meta($post_id, '_threads_posted', true);
+        $threads_error = get_post_meta($post_id, '_threads_error', true);
+
+        if ('publish' === $post_status && $threads_posted) {
+            // Post has been successfully posted to Threads
+            $threads_post_id = get_post_meta($post_id, '_threads_post_id', true);
+            $title = __('Posted to Threads', 'threads-auto-poster');
+
+            printf(
+                '<span class="threads-status-logo threads-status-logo--posted" title="%s"></span>',
+                esc_attr($title)
+            );
+        } elseif ('publish' === $post_status && $threads_error) {
+            // Post failed to post to Threads
+            printf(
+                '<span class="threads-status-logo threads-status-logo--error" title="%s"></span>',
+                esc_attr__('Failed to post to Threads', 'threads-auto-poster')
+            );
+        } else {
+            // Post has not been posted to Threads
+            printf(
+                '<span class="threads-status-logo threads-status-logo--disabled" title="%s"></span>',
+                esc_attr__('Has not been posted to Threads', 'threads-auto-poster')
+            );
+        }
     }
 }
 
