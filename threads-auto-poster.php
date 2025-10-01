@@ -1336,9 +1336,9 @@ class ThreadsAutoPoster {
     
     
     public function enqueue_admin_scripts($hook) {
-        // Load CSS for posts list column
+        // Load CSS for posts list columns
         if ($hook === 'edit.php') {
-            wp_enqueue_style('threads-admin-css', WORDPRESS_TO_THREADS_PLUGIN_URL . 'css/admin-threads.css', array(), WORDPRESS_TO_THREADS_VERSION);
+            wp_enqueue_style('threads-x-admin-css', WORDPRESS_TO_THREADS_PLUGIN_URL . 'assets/css/admin.css', array(), WORDPRESS_TO_THREADS_VERSION);
         }
 
         // Load publish confirmation script on post edit pages
