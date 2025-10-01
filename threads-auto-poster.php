@@ -55,6 +55,10 @@ class ThreadsAutoPoster {
         add_action('threads_refresh_token', array($this, 'refresh_access_token'));
         add_action('admin_notices', array($this, 'show_authorization_notices'));
 
+        // X OAuth callback handlers using admin-post.php
+        add_action('admin_post_x_oauth_callback', array($this, 'handle_x_oauth_callback'));
+        add_action('admin_post_nopriv_x_oauth_callback', array($this, 'handle_x_oauth_callback'));
+
         // Add Threads status column to posts list
         add_filter('manage_post_posts_columns', array($this, 'add_threads_status_column'));
         add_action('manage_post_posts_custom_column', array($this, 'display_threads_status_column'), 10, 2);
@@ -402,9 +406,6 @@ class ThreadsAutoPoster {
                 case 'authorize':
                     $this->initiate_x_oauth();
                     break;
-                case 'callback':
-                    $this->handle_x_oauth_callback();
-                    break;
                 case 'deauthorize':
                     $this->handle_x_deauthorize();
                     break;
@@ -421,7 +422,7 @@ class ThreadsAutoPoster {
     }
 
     public function get_x_oauth_callback_url() {
-        return add_query_arg('x_oauth_action', 'callback', home_url());
+        return admin_url('admin-post.php?action=x_oauth_callback');
     }
 
     private function initiate_x_oauth() {
@@ -466,9 +467,9 @@ class ThreadsAutoPoster {
         }
     }
 
-    private function handle_x_oauth_callback() {
+    public function handle_x_oauth_callback() {
         if (!isset($_GET['oauth_token']) || !isset($_GET['oauth_verifier'])) {
-            wp_die('Invalid OAuth callback');
+            wp_die('Invalid OAuth callback - missing parameters');
         }
 
         $oauth_token = sanitize_text_field($_GET['oauth_token']);
@@ -479,6 +480,7 @@ class ThreadsAutoPoster {
         $stored_oauth_token_secret = get_transient('x_oauth_token_secret');
 
         if ($oauth_token !== $stored_oauth_token || empty($stored_oauth_token_secret)) {
+            error_log('X OAuth Error: Token mismatch. Received: ' . $oauth_token . ', Stored: ' . $stored_oauth_token);
             wp_die('OAuth token mismatch');
         }
 
