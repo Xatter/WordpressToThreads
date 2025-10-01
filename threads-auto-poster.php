@@ -45,6 +45,7 @@ class ThreadsAutoPoster {
     public function init() {
         add_action('publish_post', array($this, 'auto_post_to_threads'), 10, 2);
         $this->handle_oauth_endpoints();
+        $this->handle_x_oauth_endpoints();
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'admin_init'));
         add_action('wp_ajax_threads_store_publish_choice', array($this, 'handle_store_publish_choice'));
@@ -293,17 +294,24 @@ class ThreadsAutoPoster {
                         </td>
                     </tr>
                     <tr>
-                        <th scope="row">X Access Token</th>
+                        <th scope="row">OAuth Authorization</th>
                         <td>
-                            <input type="text" name="x_access_token" value="<?php echo esc_attr(get_option('x_access_token')); ?>" class="regular-text" />
-                            <p class="description">Your X Access Token from X Developer Portal.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">X Access Token Secret</th>
-                        <td>
-                            <input type="password" name="x_access_token_secret" value="<?php echo esc_attr(get_option('x_access_token_secret')); ?>" class="regular-text" />
-                            <p class="description">Your X Access Token Secret from X Developer Portal.</p>
+                            <?php
+                            $x_access_token = get_option('x_access_token');
+                            $x_api_key = get_option('x_api_key');
+                            $x_api_secret = get_option('x_api_secret');
+
+                            if ($x_access_token) {
+                                $x_username = get_option('x_username');
+                                echo '<span style="color: green;">✓ Authorized' . ($x_username ? ' as @' . esc_html($x_username) : '') . '</span><br>';
+                                echo '<a href="' . $this->get_x_deauthorize_url() . '" class="button">Deauthorize</a>';
+                            } elseif (empty($x_api_key) || empty($x_api_secret)) {
+                                echo '<span style="color: red;">⚠ Please save your API Key and API Secret first</span>';
+                            } else {
+                                echo '<a href="' . $this->get_x_authorize_url() . '" class="button button-primary">Authorize with X</a>';
+                            }
+                            ?>
+                            <p class="description">Authorize this plugin to post to your X account. You must save your API credentials first.</p>
                         </td>
                     </tr>
                     <tr>
@@ -384,7 +392,159 @@ class ThreadsAutoPoster {
             $this->post_to_x($post);
         }
     }
-    
+
+    /**
+     * X (Twitter) OAuth Flow Methods
+     */
+    public function handle_x_oauth_endpoints() {
+        if (isset($_GET['x_oauth_action'])) {
+            switch ($_GET['x_oauth_action']) {
+                case 'authorize':
+                    $this->initiate_x_oauth();
+                    break;
+                case 'callback':
+                    $this->handle_x_oauth_callback();
+                    break;
+                case 'deauthorize':
+                    $this->handle_x_deauthorize();
+                    break;
+            }
+        }
+    }
+
+    public function get_x_authorize_url() {
+        return add_query_arg('x_oauth_action', 'authorize', admin_url('options-general.php?page=wordpress-to-threads'));
+    }
+
+    public function get_x_deauthorize_url() {
+        return add_query_arg('x_oauth_action', 'deauthorize', admin_url('options-general.php?page=wordpress-to-threads'));
+    }
+
+    public function get_x_oauth_callback_url() {
+        return add_query_arg('x_oauth_action', 'callback', home_url());
+    }
+
+    private function initiate_x_oauth() {
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+
+        $api_key = get_option('x_api_key');
+        $api_secret = get_option('x_api_secret');
+
+        if (empty($api_key) || empty($api_secret)) {
+            wp_die('Please configure your X API credentials first.');
+        }
+
+        if (!class_exists('Abraham\TwitterOAuth\TwitterOAuth')) {
+            wp_die('TwitterOAuth library not found');
+        }
+
+        try {
+            $connection = new \Abraham\TwitterOAuth\TwitterOAuth($api_key, $api_secret);
+            $callback_url = $this->get_x_oauth_callback_url();
+
+            // Request OAuth token
+            $request_token = $connection->oauth('oauth/request_token', array('oauth_callback' => $callback_url));
+
+            if (!isset($request_token['oauth_token']) || !isset($request_token['oauth_token_secret'])) {
+                error_log('X OAuth Error: Failed to get request token - ' . print_r($request_token, true));
+                wp_die('Failed to initiate X authorization. Please check your API credentials.');
+            }
+
+            // Store the request token temporarily
+            set_transient('x_oauth_token', $request_token['oauth_token'], 10 * MINUTE_IN_SECONDS);
+            set_transient('x_oauth_token_secret', $request_token['oauth_token_secret'], 10 * MINUTE_IN_SECONDS);
+
+            // Redirect to X authorization page
+            $authorize_url = $connection->url('oauth/authorize', array('oauth_token' => $request_token['oauth_token']));
+            wp_redirect($authorize_url);
+            exit;
+        } catch (\Exception $e) {
+            error_log('X OAuth Error: ' . $e->getMessage());
+            wp_die('Failed to initiate X authorization: ' . $e->getMessage());
+        }
+    }
+
+    private function handle_x_oauth_callback() {
+        if (!isset($_GET['oauth_token']) || !isset($_GET['oauth_verifier'])) {
+            wp_die('Invalid OAuth callback');
+        }
+
+        $oauth_token = sanitize_text_field($_GET['oauth_token']);
+        $oauth_verifier = sanitize_text_field($_GET['oauth_verifier']);
+
+        // Retrieve stored request token
+        $stored_oauth_token = get_transient('x_oauth_token');
+        $stored_oauth_token_secret = get_transient('x_oauth_token_secret');
+
+        if ($oauth_token !== $stored_oauth_token || empty($stored_oauth_token_secret)) {
+            wp_die('OAuth token mismatch');
+        }
+
+        $api_key = get_option('x_api_key');
+        $api_secret = get_option('x_api_secret');
+
+        if (!class_exists('Abraham\TwitterOAuth\TwitterOAuth')) {
+            wp_die('TwitterOAuth library not found');
+        }
+
+        try {
+            $connection = new \Abraham\TwitterOAuth\TwitterOAuth(
+                $api_key,
+                $api_secret,
+                $stored_oauth_token,
+                $stored_oauth_token_secret
+            );
+
+            // Exchange for access token
+            $access_token = $connection->oauth('oauth/access_token', array('oauth_verifier' => $oauth_verifier));
+
+            if (!isset($access_token['oauth_token']) || !isset($access_token['oauth_token_secret'])) {
+                error_log('X OAuth Error: Failed to get access token - ' . print_r($access_token, true));
+                wp_die('Failed to complete X authorization');
+            }
+
+            // Save access token and secret
+            update_option('x_access_token', $access_token['oauth_token']);
+            update_option('x_access_token_secret', $access_token['oauth_token_secret']);
+
+            // Save user info if available
+            if (isset($access_token['screen_name'])) {
+                update_option('x_username', $access_token['screen_name']);
+            }
+            if (isset($access_token['user_id'])) {
+                update_option('x_user_id', $access_token['user_id']);
+            }
+
+            // Clean up transients
+            delete_transient('x_oauth_token');
+            delete_transient('x_oauth_token_secret');
+
+            error_log('X OAuth: Successfully authorized as @' . $access_token['screen_name']);
+
+            wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&x_authorized=1'));
+            exit;
+        } catch (\Exception $e) {
+            error_log('X OAuth Error: ' . $e->getMessage());
+            wp_die('Failed to complete X authorization: ' . $e->getMessage());
+        }
+    }
+
+    private function handle_x_deauthorize() {
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+
+        delete_option('x_access_token');
+        delete_option('x_access_token_secret');
+        delete_option('x_username');
+        delete_option('x_user_id');
+
+        wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&x_deauthorized=1'));
+        exit;
+    }
+
     public function post_to_threads($post, $force_mode = null) {
         $user_id = get_option('threads_user_id');
         
