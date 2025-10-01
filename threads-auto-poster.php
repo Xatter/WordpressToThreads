@@ -2114,6 +2114,7 @@ class ThreadsAutoPoster {
                     '<span class="x-status-logo x-status-logo--disabled" title="%s"></span>',
                     esc_attr__('Has not been posted to X', 'threads-auto-poster')
                 );
+            }
         }
     }
 
