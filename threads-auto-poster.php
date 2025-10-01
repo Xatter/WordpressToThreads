@@ -59,6 +59,10 @@ class ThreadsAutoPoster {
         add_action('admin_post_x_oauth_callback', array($this, 'handle_x_oauth_callback'));
         add_action('admin_post_nopriv_x_oauth_callback', array($this, 'handle_x_oauth_callback'));
 
+        // Scheduled posting cron hooks
+        add_action('threads_scheduled_post_to_threads', array($this, 'scheduled_post_to_threads'), 10, 1);
+        add_action('threads_scheduled_post_to_x', array($this, 'scheduled_post_to_x'), 10, 1);
+
         // Add Threads status column to posts list
         add_filter('manage_post_posts_columns', array($this, 'add_threads_status_column'));
         add_action('manage_post_posts_custom_column', array($this, 'display_threads_status_column'), 10, 2);
@@ -144,6 +148,9 @@ class ThreadsAutoPoster {
         register_setting('wordpress_to_threads_settings', 'x_access_token');
         register_setting('wordpress_to_threads_settings', 'x_access_token_secret');
         register_setting('wordpress_to_threads_settings', 'x_include_media');
+
+        // Bulk posting settings
+        register_setting('wordpress_to_threads_settings', 'bulk_post_stagger_interval');
     }
     
     public function admin_page() {
@@ -323,6 +330,26 @@ class ThreadsAutoPoster {
                         <td>
                             <input type="checkbox" name="x_include_media" value="1" <?php checked(get_option('x_include_media', '1'), '1'); ?> />
                             <p class="description">Include images from posts when posting to X (Twitter).</p>
+                        </td>
+                    </tr>
+                </table>
+
+                <h2>Bulk Posting Settings</h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">Stagger Bulk Posts</th>
+                        <td>
+                            <select name="bulk_post_stagger_interval">
+                                <option value="0" <?php selected(get_option('bulk_post_stagger_interval', '0'), '0'); ?>>No delay (post immediately)</option>
+                                <option value="1800" <?php selected(get_option('bulk_post_stagger_interval', '0'), '1800'); ?>>30 minutes apart</option>
+                                <option value="3600" <?php selected(get_option('bulk_post_stagger_interval', '0'), '3600'); ?>>1 hour apart</option>
+                                <option value="7200" <?php selected(get_option('bulk_post_stagger_interval', '0'), '7200'); ?>>2 hours apart</option>
+                                <option value="14400" <?php selected(get_option('bulk_post_stagger_interval', '0'), '14400'); ?>>4 hours apart</option>
+                                <option value="21600" <?php selected(get_option('bulk_post_stagger_interval', '0'), '21600'); ?>>6 hours apart</option>
+                                <option value="43200" <?php selected(get_option('bulk_post_stagger_interval', '0'), '43200'); ?>>12 hours apart</option>
+                                <option value="86400" <?php selected(get_option('bulk_post_stagger_interval', '0'), '86400'); ?>>24 hours apart</option>
+                            </select>
+                            <p class="description">When using bulk actions to post multiple posts, schedule them with this time interval between each post. Helps avoid rate limits and makes posting look more natural.</p>
                         </td>
                     </tr>
                 </table>
@@ -2298,13 +2325,15 @@ class ThreadsAutoPoster {
             return $redirect_to;
         }
 
-        $threads_succeeded = 0;
-        $threads_failed = 0;
-        $threads_already_posted = 0;
+        $stagger_interval = (int) get_option('bulk_post_stagger_interval', 0);
 
-        $x_succeeded = 0;
-        $x_failed = 0;
+        $threads_scheduled = 0;
+        $threads_already_posted = 0;
+        $x_scheduled = 0;
         $x_already_posted = 0;
+
+        $schedule_time = time();
+        $post_index = 0;
 
         foreach ($post_ids as $post_id) {
             $post = get_post($post_id);
@@ -2313,17 +2342,18 @@ class ThreadsAutoPoster {
                 continue;
             }
 
+            // Calculate scheduled time for this post (stagger each one)
+            $scheduled_for = $schedule_time + ($post_index * $stagger_interval);
+
             // Handle Threads posting
             if ($action === 'threads_post_to_threads' || $action === 'threads_post_to_both') {
                 if (get_post_meta($post_id, '_threads_posted', true)) {
                     $threads_already_posted++;
                 } else {
-                    $result = $this->post_to_threads($post);
-                    if ($result) {
-                        $threads_succeeded++;
-                    } else {
-                        $threads_failed++;
-                    }
+                    // Schedule the post
+                    wp_schedule_single_event($scheduled_for, 'threads_scheduled_post_to_threads', array($post_id));
+                    $threads_scheduled++;
+                    error_log('Scheduled Threads post for post ID ' . $post_id . ' at ' . date('Y-m-d H:i:s', $scheduled_for));
                 }
             }
 
@@ -2332,24 +2362,23 @@ class ThreadsAutoPoster {
                 if (get_post_meta($post_id, '_x_posted', true)) {
                     $x_already_posted++;
                 } else {
-                    $result = $this->post_to_x($post);
-                    if ($result) {
-                        $x_succeeded++;
-                    } else {
-                        $x_failed++;
-                    }
+                    // Schedule the post
+                    wp_schedule_single_event($scheduled_for, 'threads_scheduled_post_to_x', array($post_id));
+                    $x_scheduled++;
+                    error_log('Scheduled X post for post ID ' . $post_id . ' at ' . date('Y-m-d H:i:s', $scheduled_for));
                 }
             }
+
+            $post_index++;
         }
 
         // Add query args to redirect URL for notice
         $redirect_to = add_query_arg(array(
-            'threads_bulk_posted' => $threads_succeeded,
-            'threads_bulk_failed' => $threads_failed,
+            'threads_bulk_scheduled' => $threads_scheduled,
             'threads_bulk_already_posted' => $threads_already_posted,
-            'x_bulk_posted' => $x_succeeded,
-            'x_bulk_failed' => $x_failed,
-            'x_bulk_already_posted' => $x_already_posted
+            'x_bulk_scheduled' => $x_scheduled,
+            'x_bulk_already_posted' => $x_already_posted,
+            'bulk_stagger_interval' => $stagger_interval
         ), $redirect_to);
 
         return $redirect_to;
@@ -2359,23 +2388,32 @@ class ThreadsAutoPoster {
      * Display admin notice after bulk action
      */
     public function bulk_action_admin_notice() {
-        if (!isset($_REQUEST['threads_bulk_posted']) && !isset($_REQUEST['x_bulk_posted'])) {
+        if (!isset($_REQUEST['threads_bulk_scheduled']) && !isset($_REQUEST['x_bulk_scheduled'])) {
             return;
         }
 
         $messages = array();
+        $stagger_interval = isset($_REQUEST['bulk_stagger_interval']) ? intval($_REQUEST['bulk_stagger_interval']) : 0;
 
         // Threads results
-        if (isset($_REQUEST['threads_bulk_posted'])) {
-            $threads_succeeded = intval($_REQUEST['threads_bulk_posted']);
-            $threads_failed = intval($_REQUEST['threads_bulk_failed']);
+        if (isset($_REQUEST['threads_bulk_scheduled'])) {
+            $threads_scheduled = intval($_REQUEST['threads_bulk_scheduled']);
             $threads_already_posted = intval($_REQUEST['threads_bulk_already_posted']);
 
-            if ($threads_succeeded > 0) {
-                $messages[] = sprintf(
-                    _n('%d post successfully posted to Threads.', '%d posts successfully posted to Threads.', $threads_succeeded, 'threads-auto-poster'),
-                    $threads_succeeded
-                );
+            if ($threads_scheduled > 0) {
+                if ($stagger_interval > 0) {
+                    $interval_text = $this->format_time_interval($stagger_interval);
+                    $messages[] = sprintf(
+                        _n('%d post scheduled for Threads (staggered %s apart).', '%d posts scheduled for Threads (staggered %s apart).', $threads_scheduled, 'threads-auto-poster'),
+                        $threads_scheduled,
+                        $interval_text
+                    );
+                } else {
+                    $messages[] = sprintf(
+                        _n('%d post scheduled for Threads.', '%d posts scheduled for Threads.', $threads_scheduled, 'threads-auto-poster'),
+                        $threads_scheduled
+                    );
+                }
             }
 
             if ($threads_already_posted > 0) {
@@ -2384,26 +2422,27 @@ class ThreadsAutoPoster {
                     $threads_already_posted
                 );
             }
-
-            if ($threads_failed > 0) {
-                $messages[] = sprintf(
-                    _n('%d post failed to post to Threads.', '%d posts failed to post to Threads.', $threads_failed, 'threads-auto-poster'),
-                    $threads_failed
-                );
-            }
         }
 
         // X results
-        if (isset($_REQUEST['x_bulk_posted'])) {
-            $x_succeeded = intval($_REQUEST['x_bulk_posted']);
-            $x_failed = intval($_REQUEST['x_bulk_failed']);
+        if (isset($_REQUEST['x_bulk_scheduled'])) {
+            $x_scheduled = intval($_REQUEST['x_bulk_scheduled']);
             $x_already_posted = intval($_REQUEST['x_bulk_already_posted']);
 
-            if ($x_succeeded > 0) {
-                $messages[] = sprintf(
-                    _n('%d post successfully posted to X.', '%d posts successfully posted to X.', $x_succeeded, 'threads-auto-poster'),
-                    $x_succeeded
-                );
+            if ($x_scheduled > 0) {
+                if ($stagger_interval > 0) {
+                    $interval_text = $this->format_time_interval($stagger_interval);
+                    $messages[] = sprintf(
+                        _n('%d post scheduled for X (staggered %s apart).', '%d posts scheduled for X (staggered %s apart).', $x_scheduled, 'threads-auto-poster'),
+                        $x_scheduled,
+                        $interval_text
+                    );
+                } else {
+                    $messages[] = sprintf(
+                        _n('%d post scheduled for X.', '%d posts scheduled for X.', $x_scheduled, 'threads-auto-poster'),
+                        $x_scheduled
+                    );
+                }
             }
 
             if ($x_already_posted > 0) {
@@ -2412,23 +2451,69 @@ class ThreadsAutoPoster {
                     $x_already_posted
                 );
             }
-
-            if ($x_failed > 0) {
-                $messages[] = sprintf(
-                    _n('%d post failed to post to X.', '%d posts failed to post to X.', $x_failed, 'threads-auto-poster'),
-                    $x_failed
-                );
-            }
         }
 
         if (!empty($messages)) {
-            $has_failures = (isset($threads_failed) && $threads_failed > 0) || (isset($x_failed) && $x_failed > 0);
-            $class = $has_failures ? 'notice-warning' : 'notice-success';
             printf(
-                '<div class="notice %s is-dismissible"><p>%s</p></div>',
-                esc_attr($class),
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
                 implode(' ', array_map('esc_html', $messages))
             );
+        }
+    }
+
+    /**
+     * Format time interval in human-readable format
+     */
+    private function format_time_interval($seconds) {
+        if ($seconds >= 86400) {
+            $hours = $seconds / 3600;
+            return sprintf(_n('%d hour', '%d hours', $hours, 'threads-auto-poster'), $hours);
+        } elseif ($seconds >= 3600) {
+            $hours = $seconds / 3600;
+            return sprintf(_n('%d hour', '%d hours', $hours, 'threads-auto-poster'), $hours);
+        } else {
+            $minutes = $seconds / 60;
+            return sprintf(_n('%d minute', '%d minutes', $minutes, 'threads-auto-poster'), $minutes);
+        }
+    }
+
+    /**
+     * Scheduled post to Threads (cron callback)
+     */
+    public function scheduled_post_to_threads($post_id) {
+        $post = get_post($post_id);
+        if (!$post) {
+            error_log('Scheduled Threads post failed: Post ' . $post_id . ' not found');
+            return;
+        }
+
+        error_log('Executing scheduled Threads post for post ID ' . $post_id);
+        $result = $this->post_to_threads($post);
+
+        if ($result) {
+            error_log('Scheduled Threads post successful for post ID ' . $post_id);
+        } else {
+            error_log('Scheduled Threads post failed for post ID ' . $post_id);
+        }
+    }
+
+    /**
+     * Scheduled post to X (cron callback)
+     */
+    public function scheduled_post_to_x($post_id) {
+        $post = get_post($post_id);
+        if (!$post) {
+            error_log('Scheduled X post failed: Post ' . $post_id . ' not found');
+            return;
+        }
+
+        error_log('Executing scheduled X post for post ID ' . $post_id);
+        $result = $this->post_to_x($post);
+
+        if ($result) {
+            error_log('Scheduled X post successful for post ID ' . $post_id);
+        } else {
+            error_log('Scheduled X post failed for post ID ' . $post_id);
         }
     }
 
