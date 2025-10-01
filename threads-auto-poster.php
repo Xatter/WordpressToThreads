@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: WordPress to Threads
+ * Plugin Name: WordPress to Threads & X
  * Plugin URI: https://extroverteddeveloper.com
- * Description: Automatically posts WordPress blog posts to Meta's Threads platform with character limit handling and URL shortening.
- * Version: 1.0.0
+ * Description: Automatically posts WordPress blog posts to Meta's Threads platform and X (Twitter) with intelligent character limit handling and URL shortening.
+ * Version: 2.0.0
  * Author: ExtrovertedDeveloper
  * License: MIT
  * Text Domain: threads-auto-poster
@@ -13,14 +13,21 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WORDPRESS_TO_THREADS_VERSION', '1.0.0');
+define('WORDPRESS_TO_THREADS_VERSION', '2.0.0');
 define('WORDPRESS_TO_THREADS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WORDPRESS_TO_THREADS_PLUGIN_URL', plugin_dir_url(__FILE__));
 
+// Load the autoshare-for-twitter library if available
+if (file_exists(WP_PLUGIN_DIR . '/autoshare-for-twitter/vendor/autoload.php')) {
+    require_once WP_PLUGIN_DIR . '/autoshare-for-twitter/vendor/autoload.php';
+}
+
 class ThreadsAutoPoster {
-    
+
     private static $instance = null;
     private $threads_character_limit = 500;
+    private $x_character_limit = 280;
+    private $x_url_length = 23; // X counts all URLs as 23 characters
     
     public static function get_instance() {
         if (self::$instance === null) {
@@ -73,11 +80,20 @@ class ThreadsAutoPoster {
         add_option('threads_enable_thread_chains', '1');
         add_option('threads_max_chain_length', '5');
         add_option('threads_split_preference', 'sentences');
+
+        // X (Twitter) options
+        add_option('x_auto_post_enabled', '0');
+        add_option('x_api_key', '');
+        add_option('x_api_secret', '');
+        add_option('x_access_token', '');
+        add_option('x_access_token_secret', '');
+        add_option('x_include_media', '1');
+
         if (!wp_next_scheduled('threads_refresh_token')) {
             // Schedule every 12 hours (43200 seconds) starting now
             wp_schedule_event(time(), 'twicedaily', 'threads_refresh_token');
         }
-        
+
         // Add custom 12-hour interval if it doesn't exist
         add_filter('cron_schedules', array($this, 'add_custom_cron_intervals'));
         flush_rewrite_rules();
@@ -97,8 +113,8 @@ class ThreadsAutoPoster {
     
     public function add_admin_menu() {
         add_options_page(
-            'WordPress to Threads Settings',
-            'WordPress to Threads',
+            'WordPress to Threads & X Settings',
+            'Threads & X',
             'manage_options',
             'wordpress-to-threads',
             array($this, 'admin_page')
@@ -115,20 +131,30 @@ class ThreadsAutoPoster {
         register_setting('wordpress_to_threads_settings', 'threads_enable_thread_chains');
         register_setting('wordpress_to_threads_settings', 'threads_max_chain_length');
         register_setting('wordpress_to_threads_settings', 'threads_split_preference');
+
+        // X (Twitter) settings
+        register_setting('wordpress_to_threads_settings', 'x_auto_post_enabled');
+        register_setting('wordpress_to_threads_settings', 'x_api_key');
+        register_setting('wordpress_to_threads_settings', 'x_api_secret');
+        register_setting('wordpress_to_threads_settings', 'x_access_token');
+        register_setting('wordpress_to_threads_settings', 'x_access_token_secret');
+        register_setting('wordpress_to_threads_settings', 'x_include_media');
     }
     
     public function admin_page() {
         ?>
         <div class="wrap">
-            <h1>WordPress to Threads Settings</h1>
+            <h1>WordPress to Threads & X Settings</h1>
             <form method="post" action="options.php">
                 <?php
                 settings_fields('wordpress_to_threads_settings');
                 do_settings_sections('wordpress_to_threads_settings');
                 ?>
+
+                <h2>Threads Settings</h2>
                 <table class="form-table">
                     <tr>
-                        <th scope="row">Enable Auto Posting</th>
+                        <th scope="row">Enable Auto Posting to Threads</th>
                         <td>
                             <input type="checkbox" name="threads_auto_post_enabled" value="1" <?php checked(get_option('threads_auto_post_enabled'), '1'); ?> />
                             <p class="description">Enable automatic posting to Threads when a blog post is published.</p>
@@ -242,70 +268,120 @@ class ThreadsAutoPoster {
                         </td>
                     </tr>
                 </table>
+
+                <h2>X (Twitter) Settings</h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">Enable Auto Posting to X</th>
+                        <td>
+                            <input type="checkbox" name="x_auto_post_enabled" value="1" <?php checked(get_option('x_auto_post_enabled'), '1'); ?> />
+                            <p class="description">Enable automatic posting to X (Twitter) when a blog post is published.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">X API Key (Consumer Key)</th>
+                        <td>
+                            <input type="text" name="x_api_key" value="<?php echo esc_attr(get_option('x_api_key')); ?>" class="regular-text" />
+                            <p class="description">Your X API Key from <a href="https://developer.twitter.com/en/portal/projects-and-apps" target="_blank">X Developer Portal</a>.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">X API Secret (Consumer Secret)</th>
+                        <td>
+                            <input type="password" name="x_api_secret" value="<?php echo esc_attr(get_option('x_api_secret')); ?>" class="regular-text" />
+                            <p class="description">Your X API Secret from X Developer Portal.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">X Access Token</th>
+                        <td>
+                            <input type="text" name="x_access_token" value="<?php echo esc_attr(get_option('x_access_token')); ?>" class="regular-text" />
+                            <p class="description">Your X Access Token from X Developer Portal.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">X Access Token Secret</th>
+                        <td>
+                            <input type="password" name="x_access_token_secret" value="<?php echo esc_attr(get_option('x_access_token_secret')); ?>" class="regular-text" />
+                            <p class="description">Your X Access Token Secret from X Developer Portal.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Include Media on X</th>
+                        <td>
+                            <input type="checkbox" name="x_include_media" value="1" <?php checked(get_option('x_include_media', '1'), '1'); ?> />
+                            <p class="description">Include images from posts when posting to X (Twitter).</p>
+                        </td>
+                    </tr>
+                </table>
+
                 <?php submit_button(); ?>
             </form>
-            
+
             <?php $this->display_pending_posts_section(); ?>
 
             <h2>Manage Posts</h2>
-            <p>To post or re-post content to Threads, go to the <a href="<?php echo admin_url('edit.php'); ?>">All Posts</a> page. You can use the bulk actions dropdown to post multiple posts at once, or click on individual posts to manage them.</p>
+            <p>To post or re-post content to Threads and/or X, go to the <a href="<?php echo admin_url('edit.php'); ?>">All Posts</a> page. You can use the bulk actions dropdown to post multiple posts at once to either or both platforms.</p>
         </div>
         <?php
     }
     
     public function auto_post_to_threads($post_id, $post) {
-        if (!get_option('threads_auto_post_enabled')) {
-            return;
-        }
-        
         if ($post->post_type !== 'post' || $post->post_status !== 'publish') {
             return;
         }
-        
-        if (get_post_meta($post_id, '_threads_posted', true)) {
-            return;
-        }
-        
+
+        $threads_enabled = get_option('threads_auto_post_enabled');
+        $x_enabled = get_option('x_auto_post_enabled');
+
         // Check if user made a specific choice during publishing
         $publish_choice = get_post_meta($post_id, '_threads_publish_choice', true);
-        
+
         if ($publish_choice === 'none') {
-            // User chose not to post to Threads
+            // User chose not to post to social media
             return;
         }
-        
-        $result = false;
-        if ($publish_choice === 'single') {
-            // Force single post mode
-            $result = $this->post_to_threads($post, 'single');
-        } elseif ($publish_choice === 'chain') {
-            // Force chain mode
-            $result = $this->post_to_threads($post, 'chain');
-        } else {
-            // No choice stored, use default behavior
-            $result = $this->post_to_threads($post);
-        }
-        
-        // Handle posting failures
-        if (!$result) {
-            // Check if it's an authorization issue
-            $access_token = get_option('threads_access_token');
-            $user_id = get_option('threads_user_id');
-            
-            if (empty($access_token) || empty($user_id)) {
-                error_log('WordPress to Threads: Auto-posting failed due to missing authorization for post ID: ' . $post_id);
-                // Store this post as needing authorization
-                $this->store_pending_post($post_id, $publish_choice ?: 'auto');
-                // Set a transient to show admin notice
-                set_transient('threads_auth_needed_notice', true, DAY_IN_SECONDS);
+
+        // Post to Threads if enabled and not already posted
+        if ($threads_enabled && !get_post_meta($post_id, '_threads_posted', true)) {
+            $result = false;
+            if ($publish_choice === 'single') {
+                // Force single post mode
+                $result = $this->post_to_threads($post, 'single');
+            } elseif ($publish_choice === 'chain') {
+                // Force chain mode
+                $result = $this->post_to_threads($post, 'chain');
             } else {
-                error_log('WordPress to Threads: Auto-posting failed for post ID: ' . $post_id . ' - not an authorization issue');
+                // No choice stored, use default behavior
+                $result = $this->post_to_threads($post);
             }
-        } else {
-            // Clean up the choice after successful posting
-            delete_post_meta($post_id, '_threads_publish_choice');
-            // Remove from pending posts if it was there
-            $this->remove_pending_post($post_id);
+
+            // Handle posting failures
+            if (!$result) {
+                // Check if it's an authorization issue
+                $access_token = get_option('threads_access_token');
+                $user_id = get_option('threads_user_id');
+
+                if (empty($access_token) || empty($user_id)) {
+                    error_log('WordPress to Threads: Auto-posting failed due to missing authorization for post ID: ' . $post_id);
+                    // Store this post as needing authorization
+                    $this->store_pending_post($post_id, $publish_choice ?: 'auto');
+                    // Set a transient to show admin notice
+                    set_transient('threads_auth_needed_notice', true, DAY_IN_SECONDS);
+                } else {
+                    error_log('WordPress to Threads: Auto-posting failed for post ID: ' . $post_id . ' - not an authorization issue');
+                }
+            } else {
+                // Clean up the choice after successful posting
+                delete_post_meta($post_id, '_threads_publish_choice');
+                // Remove from pending posts if it was there
+                $this->remove_pending_post($post_id);
+            }
+        }
+
+        // Post to X if enabled and not already posted
+        if ($x_enabled && !get_post_meta($post_id, '_x_posted', true)) {
+            $this->post_to_x($post);
         }
     }
     
@@ -1973,6 +2049,13 @@ class ThreadsAutoPoster {
             esc_html__('Posted to Threads status', 'threads-auto-poster')
         );
 
+        // Add X status column
+        $columns['is_x_posted'] = sprintf(
+            '<span class="x-status-logo" title="%s"><span class="screen-reader-text">%s</span></span>',
+            esc_attr__('X status', 'threads-auto-poster'),
+            esc_html__('Posted to X status', 'threads-auto-poster')
+        );
+
         // Add date column back
         $columns['date'] = esc_html__('Date', 'threads-auto-poster');
 
@@ -1980,38 +2063,57 @@ class ThreadsAutoPoster {
     }
 
     /**
-     * Display Threads status in posts list column
+     * Display Threads and X status in posts list column
      */
     public function display_threads_status_column($column_name, $post_id) {
-        if ('is_threads_posted' !== $column_name) {
-            return;
+        if ('is_threads_posted' === $column_name) {
+            $post_status = get_post_status($post_id);
+            $threads_posted = get_post_meta($post_id, '_threads_posted', true);
+            $threads_error = get_post_meta($post_id, '_threads_error', true);
+
+            if ('publish' === $post_status && $threads_posted) {
+                // Post has been successfully posted to Threads
+                $threads_post_id = get_post_meta($post_id, '_threads_post_id', true);
+                $title = __('Posted to Threads', 'threads-auto-poster');
+
+                printf(
+                    '<span class="threads-status-logo threads-status-logo--posted" title="%s"></span>',
+                    esc_attr($title)
+                );
+            } elseif ('publish' === $post_status && $threads_error) {
+                // Post failed to post to Threads
+                printf(
+                    '<span class="threads-status-logo threads-status-logo--error" title="%s"></span>',
+                    esc_attr__('Failed to post to Threads', 'threads-auto-poster')
+                );
+            } else {
+                // Post has not been posted to Threads
+                printf(
+                    '<span class="threads-status-logo threads-status-logo--disabled" title="%s"></span>',
+                    esc_attr__('Has not been posted to Threads', 'threads-auto-poster')
+                );
+            }
         }
 
-        $post_status = get_post_status($post_id);
-        $threads_posted = get_post_meta($post_id, '_threads_posted', true);
-        $threads_error = get_post_meta($post_id, '_threads_error', true);
+        if ('is_x_posted' === $column_name) {
+            $post_status = get_post_status($post_id);
+            $x_posted = get_post_meta($post_id, '_x_posted', true);
 
-        if ('publish' === $post_status && $threads_posted) {
-            // Post has been successfully posted to Threads
-            $threads_post_id = get_post_meta($post_id, '_threads_post_id', true);
-            $title = __('Posted to Threads', 'threads-auto-poster');
+            if ('publish' === $post_status && $x_posted) {
+                // Post has been successfully posted to X
+                $x_post_id = get_post_meta($post_id, '_x_post_id', true);
+                $title = __('Posted to X', 'threads-auto-poster');
 
-            printf(
-                '<span class="threads-status-logo threads-status-logo--posted" title="%s"></span>',
-                esc_attr($title)
-            );
-        } elseif ('publish' === $post_status && $threads_error) {
-            // Post failed to post to Threads
-            printf(
-                '<span class="threads-status-logo threads-status-logo--error" title="%s"></span>',
-                esc_attr__('Failed to post to Threads', 'threads-auto-poster')
-            );
-        } else {
-            // Post has not been posted to Threads
-            printf(
-                '<span class="threads-status-logo threads-status-logo--disabled" title="%s"></span>',
-                esc_attr__('Has not been posted to Threads', 'threads-auto-poster')
-            );
+                printf(
+                    '<span class="x-status-logo x-status-logo--posted" title="%s"></span>',
+                    esc_attr($title)
+                );
+            } else {
+                // Post has not been posted to X
+                printf(
+                    '<span class="x-status-logo x-status-logo--disabled" title="%s"></span>',
+                    esc_attr__('Has not been posted to X', 'threads-auto-poster')
+                );
         }
     }
 
@@ -2020,21 +2122,26 @@ class ThreadsAutoPoster {
      */
     public function add_bulk_actions($bulk_actions) {
         $bulk_actions['threads_post_to_threads'] = __('Post to Threads', 'threads-auto-poster');
+        $bulk_actions['threads_post_to_x'] = __('Post to X', 'threads-auto-poster');
+        $bulk_actions['threads_post_to_both'] = __('Post to Threads & X', 'threads-auto-poster');
         return $bulk_actions;
     }
 
     /**
-     * Handle bulk action for posting to Threads
+     * Handle bulk action for posting to Threads and/or X
      */
     public function handle_bulk_actions($redirect_to, $action, $post_ids) {
-        if ($action !== 'threads_post_to_threads') {
+        if (!in_array($action, array('threads_post_to_threads', 'threads_post_to_x', 'threads_post_to_both'))) {
             return $redirect_to;
         }
 
-        $processed = 0;
-        $succeeded = 0;
-        $failed = 0;
-        $already_posted = 0;
+        $threads_succeeded = 0;
+        $threads_failed = 0;
+        $threads_already_posted = 0;
+
+        $x_succeeded = 0;
+        $x_failed = 0;
+        $x_already_posted = 0;
 
         foreach ($post_ids as $post_id) {
             $post = get_post($post_id);
@@ -2043,29 +2150,43 @@ class ThreadsAutoPoster {
                 continue;
             }
 
-            // Check if already posted
-            if (get_post_meta($post_id, '_threads_posted', true)) {
-                $already_posted++;
-                continue;
+            // Handle Threads posting
+            if ($action === 'threads_post_to_threads' || $action === 'threads_post_to_both') {
+                if (get_post_meta($post_id, '_threads_posted', true)) {
+                    $threads_already_posted++;
+                } else {
+                    $result = $this->post_to_threads($post);
+                    if ($result) {
+                        $threads_succeeded++;
+                    } else {
+                        $threads_failed++;
+                    }
+                }
             }
 
-            $processed++;
-
-            // Try to post to Threads
-            $result = $this->post_to_threads($post);
-
-            if ($result) {
-                $succeeded++;
-            } else {
-                $failed++;
+            // Handle X posting
+            if ($action === 'threads_post_to_x' || $action === 'threads_post_to_both') {
+                if (get_post_meta($post_id, '_x_posted', true)) {
+                    $x_already_posted++;
+                } else {
+                    $result = $this->post_to_x($post);
+                    if ($result) {
+                        $x_succeeded++;
+                    } else {
+                        $x_failed++;
+                    }
+                }
             }
         }
 
         // Add query args to redirect URL for notice
         $redirect_to = add_query_arg(array(
-            'threads_bulk_posted' => $succeeded,
-            'threads_bulk_failed' => $failed,
-            'threads_bulk_already_posted' => $already_posted
+            'threads_bulk_posted' => $threads_succeeded,
+            'threads_bulk_failed' => $threads_failed,
+            'threads_bulk_already_posted' => $threads_already_posted,
+            'x_bulk_posted' => $x_succeeded,
+            'x_bulk_failed' => $x_failed,
+            'x_bulk_already_posted' => $x_already_posted
         ), $redirect_to);
 
         return $redirect_to;
@@ -2075,44 +2196,235 @@ class ThreadsAutoPoster {
      * Display admin notice after bulk action
      */
     public function bulk_action_admin_notice() {
-        if (!isset($_REQUEST['threads_bulk_posted'])) {
+        if (!isset($_REQUEST['threads_bulk_posted']) && !isset($_REQUEST['x_bulk_posted'])) {
             return;
         }
 
-        $succeeded = intval($_REQUEST['threads_bulk_posted']);
-        $failed = intval($_REQUEST['threads_bulk_failed']);
-        $already_posted = intval($_REQUEST['threads_bulk_already_posted']);
-
         $messages = array();
 
-        if ($succeeded > 0) {
-            $messages[] = sprintf(
-                _n('%d post successfully posted to Threads.', '%d posts successfully posted to Threads.', $succeeded, 'threads-auto-poster'),
-                $succeeded
-            );
+        // Threads results
+        if (isset($_REQUEST['threads_bulk_posted'])) {
+            $threads_succeeded = intval($_REQUEST['threads_bulk_posted']);
+            $threads_failed = intval($_REQUEST['threads_bulk_failed']);
+            $threads_already_posted = intval($_REQUEST['threads_bulk_already_posted']);
+
+            if ($threads_succeeded > 0) {
+                $messages[] = sprintf(
+                    _n('%d post successfully posted to Threads.', '%d posts successfully posted to Threads.', $threads_succeeded, 'threads-auto-poster'),
+                    $threads_succeeded
+                );
+            }
+
+            if ($threads_already_posted > 0) {
+                $messages[] = sprintf(
+                    _n('%d post was already posted to Threads.', '%d posts were already posted to Threads.', $threads_already_posted, 'threads-auto-poster'),
+                    $threads_already_posted
+                );
+            }
+
+            if ($threads_failed > 0) {
+                $messages[] = sprintf(
+                    _n('%d post failed to post to Threads.', '%d posts failed to post to Threads.', $threads_failed, 'threads-auto-poster'),
+                    $threads_failed
+                );
+            }
         }
 
-        if ($already_posted > 0) {
-            $messages[] = sprintf(
-                _n('%d post was already posted to Threads.', '%d posts were already posted to Threads.', $already_posted, 'threads-auto-poster'),
-                $already_posted
-            );
-        }
+        // X results
+        if (isset($_REQUEST['x_bulk_posted'])) {
+            $x_succeeded = intval($_REQUEST['x_bulk_posted']);
+            $x_failed = intval($_REQUEST['x_bulk_failed']);
+            $x_already_posted = intval($_REQUEST['x_bulk_already_posted']);
 
-        if ($failed > 0) {
-            $messages[] = sprintf(
-                _n('%d post failed to post to Threads.', '%d posts failed to post to Threads.', $failed, 'threads-auto-poster'),
-                $failed
-            );
+            if ($x_succeeded > 0) {
+                $messages[] = sprintf(
+                    _n('%d post successfully posted to X.', '%d posts successfully posted to X.', $x_succeeded, 'threads-auto-poster'),
+                    $x_succeeded
+                );
+            }
+
+            if ($x_already_posted > 0) {
+                $messages[] = sprintf(
+                    _n('%d post was already posted to X.', '%d posts were already posted to X.', $x_already_posted, 'threads-auto-poster'),
+                    $x_already_posted
+                );
+            }
+
+            if ($x_failed > 0) {
+                $messages[] = sprintf(
+                    _n('%d post failed to post to X.', '%d posts failed to post to X.', $x_failed, 'threads-auto-poster'),
+                    $x_failed
+                );
+            }
         }
 
         if (!empty($messages)) {
-            $class = ($failed > 0) ? 'notice-warning' : 'notice-success';
+            $has_failures = (isset($threads_failed) && $threads_failed > 0) || (isset($x_failed) && $x_failed > 0);
+            $class = $has_failures ? 'notice-warning' : 'notice-success';
             printf(
                 '<div class="notice %s is-dismissible"><p>%s</p></div>',
                 esc_attr($class),
                 implode(' ', array_map('esc_html', $messages))
             );
+        }
+    }
+
+    /**
+     * Post to X (Twitter)
+     */
+    private function post_to_x($post) {
+        $api_key = get_option('x_api_key');
+        $api_secret = get_option('x_api_secret');
+        $access_token = get_option('x_access_token');
+        $access_token_secret = get_option('x_access_token_secret');
+
+        if (empty($api_key) || empty($api_secret) || empty($access_token) || empty($access_token_secret)) {
+            error_log('WordPress to X: Missing API credentials');
+            return false;
+        }
+
+        if (!class_exists('Abraham\TwitterOAuth\TwitterOAuth')) {
+            error_log('WordPress to X: TwitterOAuth library not found');
+            return false;
+        }
+
+        try {
+            $connection = new \Abraham\TwitterOAuth\TwitterOAuth(
+                $api_key,
+                $api_secret,
+                $access_token,
+                $access_token_secret
+            );
+
+            $connection->setTimeouts(10, 30);
+            $connection->setApiVersion('2');
+
+            // Prepare content for X using the same intelligent logic
+            $post_content = $this->prepare_post_content_for_x($post);
+
+            if (!$post_content) {
+                error_log('WordPress to X: Failed to prepare post content');
+                return false;
+            }
+
+            $update_data = array(
+                'text' => $post_content
+            );
+
+            // Handle media if enabled
+            $include_media = get_option('x_include_media', '1') === '1';
+            if ($include_media && has_post_thumbnail($post->ID)) {
+                $media_id = $this->upload_media_to_x($post, $connection);
+                if ($media_id) {
+                    $update_data['media'] = array(
+                        'media_ids' => array((string) $media_id)
+                    );
+                }
+            }
+
+            // Send tweet
+            $response = $connection->post('tweets', $update_data, true);
+
+            // Twitter API V2 wraps response in data
+            if (isset($response->data)) {
+                $response = $response->data;
+            }
+
+            if (isset($response->id)) {
+                error_log('WordPress to X: Post successful. Tweet ID: ' . $response->id);
+                update_post_meta($post->ID, '_x_posted', '1');
+                update_post_meta($post->ID, '_x_post_id', $response->id);
+                return true;
+            } else {
+                error_log('WordPress to X: Failed to post. Response: ' . print_r($response, true));
+                return false;
+            }
+        } catch (\Exception $e) {
+            error_log('WordPress to X: Exception occurred: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Prepare post content for X (280 character limit)
+     * Reuses the intelligent content management logic from Threads
+     */
+    private function prepare_post_content_for_x($post) {
+        $title = $post->post_title;
+        $content = wp_strip_all_tags($post->post_content);
+        $post_url = get_permalink($post->ID);
+
+        $full_text = $title . "\n\n" . $content;
+
+        // For X, we need to account for URL being counted as 23 characters
+        $url_counted_length = $this->x_url_length;
+
+        // Shorten URL if Bitly is available
+        $bitly_token = get_option('bitly_access_token');
+        $url_to_use = $post_url;
+
+        if (!empty($bitly_token)) {
+            $short_url = $this->shorten_url($post_url);
+            if ($short_url) {
+                $url_to_use = $short_url;
+                // Bitly URLs are still counted as 23 chars by X
+            }
+        }
+
+        // Calculate available characters (280 - URL - spacing)
+        $available_chars = $this->x_character_limit - $url_counted_length - 4; // 4 for "\n\n" before and after
+
+        if (strlen($full_text) <= $available_chars) {
+            return $full_text . "\n\n" . $url_to_use;
+        }
+
+        // Content is too long, need to truncate intelligently
+        if (strlen($title) + 2 < $available_chars) {
+            $remaining_chars = $available_chars - strlen($title) - 2;
+            $truncated_content = substr($content, 0, $remaining_chars - 3) . '...';
+            return $title . "\n\n" . $truncated_content . "\n\n" . $url_to_use;
+        } else {
+            $truncated_title = substr($title, 0, $available_chars - 3) . '...';
+            return $truncated_title . "\n\n" . $url_to_use;
+        }
+    }
+
+    /**
+     * Upload media to X
+     */
+    private function upload_media_to_x($post, $connection) {
+        if (!has_post_thumbnail($post->ID)) {
+            return null;
+        }
+
+        $attachment_id = get_post_thumbnail_id($post->ID);
+        $file_path = get_attached_file($attachment_id);
+
+        if (!$file_path || !file_exists($file_path)) {
+            return null;
+        }
+
+        // Check file size (max 5MB for images on X)
+        $file_size = filesize($file_path);
+        if ($file_size > 5000000) {
+            error_log('WordPress to X: Image too large (' . $file_size . ' bytes)');
+            return null;
+        }
+
+        try {
+            $connection->setApiVersion('1.1');
+            $response = $connection->upload('media/upload', array('media' => $file_path));
+
+            if (isset($response->media_id)) {
+                error_log('WordPress to X: Media uploaded. ID: ' . $response->media_id);
+                return $response->media_id;
+            } else {
+                error_log('WordPress to X: Failed to upload media. Response: ' . print_r($response, true));
+                return null;
+            }
+        } catch (\Exception $e) {
+            error_log('WordPress to X: Media upload exception: ' . $e->getMessage());
+            return null;
         }
     }
 }
