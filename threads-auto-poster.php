@@ -145,9 +145,10 @@ class ThreadsAutoPoster {
         register_setting('wordpress_to_threads_settings', 'x_auto_post_enabled');
         register_setting('wordpress_to_threads_settings', 'x_api_key');
         register_setting('wordpress_to_threads_settings', 'x_api_secret');
-        register_setting('wordpress_to_threads_settings', 'x_access_token');
-        register_setting('wordpress_to_threads_settings', 'x_access_token_secret');
         register_setting('wordpress_to_threads_settings', 'x_include_media');
+
+        // Note: x_access_token, x_access_token_secret, x_username, x_user_id
+        // are NOT registered here because they're set via OAuth flow, not form submission
 
         // Bulk posting settings
         register_setting('wordpress_to_threads_settings', 'bulk_post_stagger_interval');
