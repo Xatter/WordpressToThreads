@@ -2604,11 +2604,14 @@ class ThreadsAutoPoster {
         $post_url = get_permalink($post->ID);
 
         $full_text = $title . "\n\n" . $content;
+        $full_post = $full_text . "\n\n" . $post_url;
 
-        // For X, we need to account for URL being counted as 23 characters
-        $url_counted_length = $this->x_url_length;
+        // First check: does the entire post fit within 280 characters as-is?
+        if (strlen($full_post) <= $this->x_character_limit) {
+            return $full_post;
+        }
 
-        // Shorten URL if Bitly is available
+        // Post is too long, need to account for URL shortening and truncation
         $bitly_token = get_option('bitly_access_token');
         $url_to_use = $post_url;
 
@@ -2616,12 +2619,14 @@ class ThreadsAutoPoster {
             $short_url = $this->shorten_url($post_url);
             if ($short_url) {
                 $url_to_use = $short_url;
-                // Bitly URLs are still counted as 23 chars by X
             }
         }
 
+        // X counts all URLs as 23 characters regardless of actual length
+        $url_counted_length = $this->x_url_length;
+
         // Calculate available characters (280 - URL - spacing)
-        $available_chars = $this->x_character_limit - $url_counted_length - 4; // 4 for "\n\n" before and after
+        $available_chars = $this->x_character_limit - $url_counted_length - 2; // 2 for "\n\n" spacing
 
         if (strlen($full_text) <= $available_chars) {
             return $full_text . "\n\n" . $url_to_use;
