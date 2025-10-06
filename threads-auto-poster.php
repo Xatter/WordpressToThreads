@@ -600,7 +600,7 @@ class ThreadsAutoPoster {
         } else {
             // Check if we should use thread chains for long content (default behavior)
             $enable_thread_chains = get_option('threads_enable_thread_chains', '1') === '1';
-            $title = $post->post_title;
+            $title = wp_strip_all_tags($post->post_title);
             $content = wp_strip_all_tags($post->post_content);
             $full_text = $title . "\n\n" . $content;
             
@@ -763,13 +763,13 @@ class ThreadsAutoPoster {
     }
     
     private function prepare_post_content($post) {
-        $title = $post->post_title;
+        $title = wp_strip_all_tags($post->post_title);
         $content = wp_strip_all_tags($post->post_content);
         $post_url = get_permalink($post->ID);
-        
+
         $full_text = $title . "\n\n" . $content;
 
-        if (strlen($full_text) < $this->threads_character_limit) {
+        if (strlen($full_text) <= $this->threads_character_limit) {
             return $full_text;
         }
         
@@ -796,7 +796,7 @@ class ThreadsAutoPoster {
     }
     
     private function split_content_for_thread_chain($post) {
-        $title = $post->post_title;
+        $title = wp_strip_all_tags($post->post_title);
         $content = wp_strip_all_tags($post->post_content);
         $post_url = get_permalink($post->ID);
         $split_preference = get_option('threads_split_preference', 'sentences');
@@ -2599,7 +2599,7 @@ class ThreadsAutoPoster {
      * Reuses the intelligent content management logic from Threads
      */
     private function prepare_post_content_for_x($post) {
-        $title = $post->post_title;
+        $title = wp_strip_all_tags($post->post_title);
         $content = wp_strip_all_tags($post->post_content);
         $post_url = get_permalink($post->ID);
 
