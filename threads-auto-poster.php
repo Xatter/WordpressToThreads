@@ -1285,7 +1285,75 @@ class ThreadsAutoPoster {
         $body = wp_remote_retrieve_body($response);
         return json_decode($body, true);
     }
-    
+
+    /**
+     * Check the status of a media container
+     *
+     * @param string $container_id The container ID to check
+     * @return array|false The status response or false on failure
+     */
+    private function check_container_status($container_id) {
+        $api_url = "https://graph.threads.net/v1.0/{$container_id}?fields=status,error_message";
+
+        $args = array(
+            'method' => 'GET',
+            'timeout' => 15
+        );
+
+        $response = $this->make_authenticated_request($api_url, $args);
+
+        if (!$response) {
+            return false;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        return json_decode($body, true);
+    }
+
+    /**
+     * Wait for a container to be ready for publishing
+     *
+     * @param string $container_id The container ID to wait for
+     * @param int $max_wait_seconds Maximum seconds to wait (default 60)
+     * @param int $poll_interval_seconds Seconds between status checks (default 2)
+     * @return bool True if container is ready, false if timeout or error
+     */
+    private function wait_for_container_ready($container_id, $max_wait_seconds = 60, $poll_interval_seconds = 2) {
+        $start_time = time();
+        $attempts = 0;
+
+        while ((time() - $start_time) < $max_wait_seconds) {
+            $attempts++;
+            $status = $this->check_container_status($container_id);
+
+            if (!$status) {
+                error_log("WordPress to Threads: Failed to check container status (attempt {$attempts})");
+                sleep($poll_interval_seconds);
+                continue;
+            }
+
+            $container_status = isset($status['status']) ? $status['status'] : 'UNKNOWN';
+            error_log("WordPress to Threads: Container {$container_id} status: {$container_status} (attempt {$attempts})");
+
+            if ($container_status === 'FINISHED') {
+                error_log("WordPress to Threads: Container ready after {$attempts} status checks");
+                return true;
+            }
+
+            if ($container_status === 'ERROR') {
+                $error_msg = isset($status['error_message']) ? $status['error_message'] : 'Unknown error';
+                error_log("WordPress to Threads: Container processing failed: {$error_msg}");
+                return false;
+            }
+
+            // IN_PROGRESS or other status - keep waiting
+            sleep($poll_interval_seconds);
+        }
+
+        error_log("WordPress to Threads: Timeout waiting for container {$container_id} after {$max_wait_seconds} seconds");
+        return false;
+    }
+
     private function publish_threads_container($user_id, $container_id, $access_token, $has_video = false) {
         $api_url = "https://graph.threads.net/v1.0/{$user_id}/threads_publish";
         
@@ -1301,65 +1369,38 @@ class ThreadsAutoPoster {
             'method' => 'POST',
             'timeout' => 30
         );
-        
-        // For video posts, add delay and retry logic
-        $max_attempts = $has_video ? 3 : 1;
-        $delay_seconds = $has_video ? 5 : 0;
-        
-        if ($has_video && $delay_seconds > 0) {
-            error_log('WordPress to Threads: Video detected, waiting ' . $delay_seconds . ' seconds for processing...');
-            sleep($delay_seconds);
+
+        // Wait for container to be ready before publishing
+        // Videos need more time (up to 120s), text/images are faster (up to 30s)
+        $max_wait = $has_video ? 120 : 30;
+        $poll_interval = $has_video ? 3 : 2;
+
+        if (!$this->wait_for_container_ready($container_id, $max_wait, $poll_interval)) {
+            error_log('WordPress to Threads: Container not ready for publishing, aborting');
+            return array(
+                'error' => array(
+                    'message' => 'Container processing timed out or failed',
+                    'type' => 'ContainerNotReady'
+                )
+            );
         }
-        
-        for ($attempt = 1; $attempt <= $max_attempts; $attempt++) {
-            error_log('WordPress to Threads: Publishing attempt ' . $attempt . ' of ' . $max_attempts);
-            
-            $response = $this->make_authenticated_request($api_url, $args);
-            
-            if (!$response) {
-                error_log('WordPress to Threads: Failed to publish container - authentication failed on attempt ' . $attempt);
-                if ($attempt === $max_attempts) {
-                    return false;
-                }
-                continue;
-            }
-            
-            $response_code = wp_remote_retrieve_response_code($response);
-            $body = wp_remote_retrieve_body($response);
-            $headers = wp_remote_retrieve_headers($response);
-            
-            error_log('WordPress to Threads: Publish HTTP response code: ' . $response_code . ' (attempt ' . $attempt . ')');
-            error_log('WordPress to Threads: Publish raw response body: ' . $body);
-            if ($attempt === 1) {
-                error_log('WordPress to Threads: Publish response headers: ' . print_r($headers, true));
-            }
-            
-            $decoded_response = json_decode($body, true);
-            error_log('WordPress to Threads: Publish decoded response: ' . print_r($decoded_response, true));
-            
-            // Check if it's a media not found error (code 24, subcode 4279009)
-            if ($response_code === 400 && 
-                isset($decoded_response['error']['code']) && 
-                $decoded_response['error']['code'] === 24 && 
-                isset($decoded_response['error']['error_subcode']) && 
-                $decoded_response['error']['error_subcode'] === 4279009) {
-                
-                if ($attempt < $max_attempts) {
-                    $retry_delay = $attempt * 5; // Increasing delay: 5s, 10s
-                    error_log('WordPress to Threads: Media not found error, retrying in ' . $retry_delay . ' seconds...');
-                    sleep($retry_delay);
-                    continue;
-                } else {
-                    error_log('WordPress to Threads: Media not found error persisted after all retry attempts');
-                }
-            }
-            
-            // For successful responses or non-retryable errors, return immediately
-            return $decoded_response;
+
+        // Container is ready, publish it
+        error_log('WordPress to Threads: Publishing container ' . $container_id);
+        $response = $this->make_authenticated_request($api_url, $args);
+
+        if (!$response) {
+            error_log('WordPress to Threads: Failed to publish container - authentication failed');
+            return false;
         }
-        
-        // This should never be reached, but just in case
-        return false;
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+
+        error_log('WordPress to Threads: Publish HTTP response code: ' . $response_code);
+        error_log('WordPress to Threads: Publish raw response body: ' . $body);
+
+        return json_decode($body, true);
     }
     
     
