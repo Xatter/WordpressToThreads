@@ -783,15 +783,15 @@ class ThreadsAutoPoster {
             }
         }
         
-        $available_chars = $this->threads_character_limit - strlen($url_to_use) - 4;
-        
+        $available_chars = $this->threads_character_limit - strlen($url_to_use) - 2;
+
         if (strlen($title) + 2 < $available_chars) {
             $remaining_chars = $available_chars - strlen($title) - 2;
-            $truncated_content = substr($content, 0, $remaining_chars - 3) . '...';
-            return $title . "\n\n" . $truncated_content . "\n\n" . $url_to_use;
+            $truncated_content = substr($content, 0, $remaining_chars - 10) . '... More: ';
+            return $title . "\n\n" . $truncated_content . $url_to_use;
         } else {
-            $truncated_title = substr($title, 0, $available_chars - 3) . '...';
-            return $truncated_title . "\n\n" . $url_to_use;
+            $truncated_title = substr($title, 0, $available_chars - 10) . '... More: ';
+            return $truncated_title . $url_to_use;
         }
     }
     
@@ -816,7 +816,8 @@ class ThreadsAutoPoster {
         $full_text = $title . "\n\n" . $content;
         
         // Calculate available characters for content (reserve space for URL at the end and thread indicators)
-        $url_space = strlen("\n\n" . $url_to_use);
+        // Use the longer truncation suffix "... More: <url>" to ensure we stay under limit
+        $url_space = strlen('... More: ' . $url_to_use);
         $available_chars_last_post = $this->threads_character_limit - $url_space;
         $available_chars_regular = $this->threads_character_limit;
         
@@ -852,7 +853,12 @@ class ThreadsAutoPoster {
             
             // Add URL to the last part only
             if ($is_last_part) {
-                $part_text .= "\n\n" . $url_to_use;
+                // We're at max chain length and truncating content - use "... More: " format
+                $part_text = rtrim($part_text);
+                if (substr($part_text, -3) !== '...') {
+                    $part_text .= '...';
+                }
+                $part_text .= ' More: ' . $url_to_use;
             }
             
             $thread_parts[] = trim($part_text);
@@ -860,9 +866,13 @@ class ThreadsAutoPoster {
         }
         
         // If we still have remaining text and hit the max chain length, append URL to last part
-        if (!empty($remaining_text) && !strpos(end($thread_parts), $url_to_use)) {
+        if (!empty($remaining_text) && strpos(end($thread_parts), $url_to_use) === false) {
             $last_part = array_pop($thread_parts);
-            $last_part .= "\n\n" . $url_to_use;
+            $last_part = rtrim($last_part);
+            if (substr($last_part, -3) !== '...') {
+                $last_part .= '...';
+            }
+            $last_part .= ' More: ' . $url_to_use;
             $thread_parts[] = $last_part;
         }
         

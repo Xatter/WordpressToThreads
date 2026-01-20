@@ -82,7 +82,7 @@ class PreparePostContentTest extends TestCase {
         $this->assertStringContainsString('https://example.com/post-1/', $result, 'Should contain URL');
         $this->assertStringEndsWith('https://example.com/post-1/', $result, 'URL should be at the end');
         $this->assertLessThanOrEqual(500, strlen($result), 'Result should not exceed 500 characters');
-        $this->assertStringContainsString('...', $result, 'Should contain ellipsis for truncation');
+        $this->assertStringContainsString('... More: ', $result, 'Should contain "... More: " for truncation');
     }
 
     public function test_content_over_limit_uses_bitly_when_available() {
@@ -108,8 +108,8 @@ class PreparePostContentTest extends TestCase {
         // When: We prepare the post content
         $result = $this->poster->test_prepare_post_content($post);
 
-        // Then: Should truncate title and add URL, no content
-        $this->assertStringContainsString('...', $result, 'Should truncate title with ellipsis');
+        // Then: Should truncate title and add URL with "... More: " format, no content
+        $this->assertStringContainsString('... More: ', $result, 'Should truncate title with "... More: "');
         $this->assertStringContainsString('https://example.com/post-1/', $result, 'Should contain URL');
         $this->assertLessThanOrEqual(500, strlen($result), 'Result should not exceed 500 characters');
         $this->assertStringNotContainsString('Some content here', $result, 'Should not include content when title is too long');
@@ -124,15 +124,16 @@ class PreparePostContentTest extends TestCase {
         // When: We prepare the post content
         $result = $this->poster->test_prepare_post_content($post);
 
-        // Then: Should include full title, truncated content, and URL
+        // Then: Should include full title, truncated content, and URL with "... More: " format
         $this->assertStringContainsString($title, $result, 'Should contain full title');
-        $this->assertStringContainsString('...', $result, 'Should truncate content with ellipsis');
+        $this->assertStringContainsString('... More: ', $result, 'Should truncate content with "... More: " before URL');
         $this->assertStringContainsString('https://example.com/post-1/', $result, 'Should contain URL');
         $this->assertLessThanOrEqual(500, strlen($result), 'Result should not exceed 500 characters');
 
-        // Verify structure: title, content, URL
+        // Verify structure: title \n\n content... More: URL (2 parts separated by \n\n)
         $parts = explode("\n\n", $result);
-        $this->assertCount(3, $parts, 'Should have three parts: title, content, URL');
+        $this->assertCount(2, $parts, 'Should have two parts: title and content+URL');
+        $this->assertStringEndsWith('https://example.com/post-1/', $result, 'URL should be at the end');
     }
 
     public function test_empty_content_with_title() {
