@@ -96,14 +96,18 @@ if (!function_exists('add_filter')) {
 
 if (!function_exists('update_post_meta')) {
     function update_post_meta($post_id, $meta_key, $meta_value) {
-        // Mock function for testing
+        global $_test_post_meta;
+        $_test_post_meta[$post_id][$meta_key] = $meta_value;
         return true;
     }
 }
 
 if (!function_exists('get_post_meta')) {
     function get_post_meta($post_id, $key = '', $single = false) {
-        // Mock function for testing
+        global $_test_post_meta;
+        if (!empty($key) && isset($_test_post_meta[$post_id][$key])) {
+            return $single ? $_test_post_meta[$post_id][$key] : array($_test_post_meta[$post_id][$key]);
+        }
         return $single ? '' : array();
     }
 }
@@ -146,6 +150,65 @@ if (!class_exists('WP_Error')) {
     }
 }
 
+// Post meta mock storage
+global $_test_post_meta;
+$_test_post_meta = [];
+
+// Scheduled events mock storage
+global $_test_scheduled_events;
+$_test_scheduled_events = [];
+
+// Mock posts storage
+global $_test_mock_posts;
+$_test_mock_posts = [];
+
+if (!function_exists('get_post')) {
+    function get_post($post_id) {
+        global $_test_mock_posts;
+        return $_test_mock_posts[$post_id] ?? null;
+    }
+}
+
+if (!function_exists('wp_schedule_single_event')) {
+    function wp_schedule_single_event($timestamp, $hook, $args = array()) {
+        global $_test_scheduled_events;
+        $_test_scheduled_events[] = array(
+            'time' => $timestamp,
+            'hook' => $hook,
+            'args' => $args,
+        );
+        return true;
+    }
+}
+
+if (!function_exists('add_query_arg')) {
+    function add_query_arg($args, $url = '') {
+        $query = http_build_query($args);
+        $separator = (strpos($url, '?') !== false) ? '&' : '?';
+        return $url . $separator . $query;
+    }
+}
+
+if (!function_exists('delete_post_meta')) {
+    function delete_post_meta($post_id, $meta_key, $meta_value = '') {
+        global $_test_post_meta;
+        unset($_test_post_meta[$post_id][$meta_key]);
+        return true;
+    }
+}
+
+if (!function_exists('set_transient')) {
+    function set_transient($transient, $value, $expiration = 0) {
+        return true;
+    }
+}
+
+if (!function_exists('_n')) {
+    function _n($single, $plural, $number, $domain = 'default') {
+        return ($number === 1) ? $single : $plural;
+    }
+}
+
 // Helper function to set WordPress options in tests
 function set_test_option($option, $value) {
     global $_test_options;
@@ -159,6 +222,42 @@ function set_test_option($option, $value) {
 function clear_test_options() {
     global $_test_options;
     $_test_options = [];
+}
+
+// Helper function to set post meta in tests
+function set_test_post_meta($post_id, $key, $value) {
+    global $_test_post_meta;
+    $_test_post_meta[$post_id][$key] = $value;
+}
+
+// Helper function to clear test post meta
+function clear_test_post_meta() {
+    global $_test_post_meta;
+    $_test_post_meta = [];
+}
+
+// Helper function to get scheduled events
+function get_scheduled_events() {
+    global $_test_scheduled_events;
+    return $_test_scheduled_events;
+}
+
+// Helper function to clear scheduled events
+function clear_scheduled_events() {
+    global $_test_scheduled_events;
+    $_test_scheduled_events = [];
+}
+
+// Helper function to set mock posts
+function set_mock_post($post_id, $post) {
+    global $_test_mock_posts;
+    $_test_mock_posts[$post_id] = $post;
+}
+
+// Helper function to clear mock posts
+function clear_mock_posts() {
+    global $_test_mock_posts;
+    $_test_mock_posts = [];
 }
 
 // Helper function to create mock post objects

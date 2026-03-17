@@ -60,7 +60,7 @@ class ThreadsAutoPoster {
         add_action('admin_post_nopriv_x_oauth_callback', array($this, 'handle_x_oauth_callback'));
 
         // Scheduled posting cron hooks
-        add_action('threads_scheduled_post_to_threads', array($this, 'scheduled_post_to_threads'), 10, 1);
+        add_action('threads_scheduled_post_to_threads', array($this, 'scheduled_post_to_threads'), 10, 2);
         add_action('threads_scheduled_post_to_x', array($this, 'scheduled_post_to_x'), 10, 1);
 
         // Add Threads status column to posts list
@@ -382,46 +382,17 @@ class ThreadsAutoPoster {
             return;
         }
 
-        // Post to Threads if enabled and not already posted
+        // Schedule Threads posting in the background if enabled and not already posted
         if ($threads_enabled && !get_post_meta($post_id, '_threads_posted', true)) {
-            $result = false;
-            if ($publish_choice === 'single') {
-                // Force single post mode
-                $result = $this->post_to_threads($post, 'single');
-            } elseif ($publish_choice === 'chain') {
-                // Force chain mode
-                $result = $this->post_to_threads($post, 'chain');
-            } else {
-                // No choice stored, use default behavior
-                $result = $this->post_to_threads($post);
-            }
-
-            // Handle posting failures
-            if (!$result) {
-                // Check if it's an authorization issue
-                $access_token = get_option('threads_access_token');
-                $user_id = get_option('threads_user_id');
-
-                if (empty($access_token) || empty($user_id)) {
-                    error_log('WordPress to Threads: Auto-posting failed due to missing authorization for post ID: ' . $post_id);
-                    // Store this post as needing authorization
-                    $this->store_pending_post($post_id, $publish_choice ?: 'auto');
-                    // Set a transient to show admin notice
-                    set_transient('threads_auth_needed_notice', true, DAY_IN_SECONDS);
-                } else {
-                    error_log('WordPress to Threads: Auto-posting failed for post ID: ' . $post_id . ' - not an authorization issue');
-                }
-            } else {
-                // Clean up the choice after successful posting
-                delete_post_meta($post_id, '_threads_publish_choice');
-                // Remove from pending posts if it was there
-                $this->remove_pending_post($post_id);
-            }
+            $mode = $publish_choice ?: 'auto';
+            wp_schedule_single_event(time(), 'threads_scheduled_post_to_threads', array($post_id, $mode));
+            error_log('WordPress to Threads: Scheduled background post to Threads for post ID: ' . $post_id . ' with mode: ' . $mode);
         }
 
-        // Post to X if enabled and not already posted
+        // Schedule X posting in the background if enabled and not already posted
         if ($x_enabled && !get_post_meta($post_id, '_x_posted', true)) {
-            $this->post_to_x($post);
+            wp_schedule_single_event(time(), 'threads_scheduled_post_to_x', array($post_id));
+            error_log('WordPress to Threads: Scheduled background post to X for post ID: ' . $post_id);
         }
     }
 
@@ -2380,9 +2351,7 @@ class ThreadsAutoPoster {
         $stagger_interval = (int) get_option('bulk_post_stagger_interval', 0);
 
         $threads_scheduled = 0;
-        $threads_already_posted = 0;
         $x_scheduled = 0;
-        $x_already_posted = 0;
 
         $schedule_time = time();
         $post_index = 0;
@@ -2397,28 +2366,18 @@ class ThreadsAutoPoster {
             // Calculate scheduled time for this post (stagger each one)
             $scheduled_for = $schedule_time + ($post_index * $stagger_interval);
 
-            // Handle Threads posting
+            // Handle Threads posting (always post — bulk action is an explicit user request)
             if ($action === 'threads_post_to_threads' || $action === 'threads_post_to_both') {
-                if (get_post_meta($post_id, '_threads_posted', true)) {
-                    $threads_already_posted++;
-                } else {
-                    // Schedule the post
-                    wp_schedule_single_event($scheduled_for, 'threads_scheduled_post_to_threads', array($post_id));
-                    $threads_scheduled++;
-                    error_log('Scheduled Threads post for post ID ' . $post_id . ' at ' . date('Y-m-d H:i:s', $scheduled_for));
-                }
+                wp_schedule_single_event($scheduled_for, 'threads_scheduled_post_to_threads', array($post_id));
+                $threads_scheduled++;
+                error_log('Scheduled Threads post for post ID ' . $post_id . ' at ' . date('Y-m-d H:i:s', $scheduled_for));
             }
 
-            // Handle X posting
+            // Handle X posting (always post — bulk action is an explicit user request)
             if ($action === 'threads_post_to_x' || $action === 'threads_post_to_both') {
-                if (get_post_meta($post_id, '_x_posted', true)) {
-                    $x_already_posted++;
-                } else {
-                    // Schedule the post
-                    wp_schedule_single_event($scheduled_for, 'threads_scheduled_post_to_x', array($post_id));
-                    $x_scheduled++;
-                    error_log('Scheduled X post for post ID ' . $post_id . ' at ' . date('Y-m-d H:i:s', $scheduled_for));
-                }
+                wp_schedule_single_event($scheduled_for, 'threads_scheduled_post_to_x', array($post_id));
+                $x_scheduled++;
+                error_log('Scheduled X post for post ID ' . $post_id . ' at ' . date('Y-m-d H:i:s', $scheduled_for));
             }
 
             $post_index++;
@@ -2427,9 +2386,7 @@ class ThreadsAutoPoster {
         // Add query args to redirect URL for notice
         $redirect_to = add_query_arg(array(
             'threads_bulk_scheduled' => $threads_scheduled,
-            'threads_bulk_already_posted' => $threads_already_posted,
             'x_bulk_scheduled' => $x_scheduled,
-            'x_bulk_already_posted' => $x_already_posted,
             'bulk_stagger_interval' => $stagger_interval
         ), $redirect_to);
 
@@ -2450,7 +2407,6 @@ class ThreadsAutoPoster {
         // Threads results
         if (isset($_REQUEST['threads_bulk_scheduled'])) {
             $threads_scheduled = intval($_REQUEST['threads_bulk_scheduled']);
-            $threads_already_posted = intval($_REQUEST['threads_bulk_already_posted']);
 
             if ($threads_scheduled > 0) {
                 if ($stagger_interval > 0) {
@@ -2467,19 +2423,11 @@ class ThreadsAutoPoster {
                     );
                 }
             }
-
-            if ($threads_already_posted > 0) {
-                $messages[] = sprintf(
-                    _n('%d post was already posted to Threads.', '%d posts were already posted to Threads.', $threads_already_posted, 'threads-auto-poster'),
-                    $threads_already_posted
-                );
-            }
         }
 
         // X results
         if (isset($_REQUEST['x_bulk_scheduled'])) {
             $x_scheduled = intval($_REQUEST['x_bulk_scheduled']);
-            $x_already_posted = intval($_REQUEST['x_bulk_already_posted']);
 
             if ($x_scheduled > 0) {
                 if ($stagger_interval > 0) {
@@ -2495,13 +2443,6 @@ class ThreadsAutoPoster {
                         $x_scheduled
                     );
                 }
-            }
-
-            if ($x_already_posted > 0) {
-                $messages[] = sprintf(
-                    _n('%d post was already posted to X.', '%d posts were already posted to X.', $x_already_posted, 'threads-auto-poster'),
-                    $x_already_posted
-                );
             }
         }
 
@@ -2532,20 +2473,39 @@ class ThreadsAutoPoster {
     /**
      * Scheduled post to Threads (cron callback)
      */
-    public function scheduled_post_to_threads($post_id) {
+    public function scheduled_post_to_threads($post_id, $mode = 'auto') {
         $post = get_post($post_id);
         if (!$post) {
             error_log('Scheduled Threads post failed: Post ' . $post_id . ' not found');
             return;
         }
 
-        error_log('Executing scheduled Threads post for post ID ' . $post_id);
-        $result = $this->post_to_threads($post);
+        error_log('Executing scheduled Threads post for post ID ' . $post_id . ' with mode: ' . $mode);
+
+        $result = false;
+        if ($mode === 'single') {
+            $result = $this->post_to_threads($post, 'single');
+        } elseif ($mode === 'chain') {
+            $result = $this->post_to_threads($post, 'chain');
+        } else {
+            $result = $this->post_to_threads($post);
+        }
 
         if ($result) {
+            delete_post_meta($post_id, '_threads_publish_choice');
+            $this->remove_pending_post($post_id);
             error_log('Scheduled Threads post successful for post ID ' . $post_id);
         } else {
-            error_log('Scheduled Threads post failed for post ID ' . $post_id);
+            $access_token = get_option('threads_access_token');
+            $user_id = get_option('threads_user_id');
+
+            if (empty($access_token) || empty($user_id)) {
+                error_log('WordPress to Threads: Scheduled post failed due to missing authorization for post ID: ' . $post_id);
+                $this->store_pending_post($post_id, $mode);
+                set_transient('threads_auth_needed_notice', true, DAY_IN_SECONDS);
+            } else {
+                error_log('Scheduled Threads post failed for post ID ' . $post_id . ' - not an authorization issue');
+            }
         }
     }
 
