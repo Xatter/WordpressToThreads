@@ -150,12 +150,16 @@ class SplitContentForThreadChainTest extends TestCase {
         $this->assertGreaterThan(1, count($result), 'Should split into multiple posts');
 
         // Check that posts end with sentence punctuation (except last post which has URL)
+        // First post may have thread indicator 🧵 appended
         for ($i = 0; $i < count($result) - 1; $i++) {
             $trimmed = trim($result[$i]);
+            // Strip thread indicator if present
+            $trimmed = preg_replace('/\n🧵$/', '', $trimmed);
+            $trimmed = trim($trimmed);
             $this->assertMatchesRegularExpression(
                 '/[.!?]$/',
                 $trimmed,
-                "Post {$i} should end with sentence punctuation"
+                "Post {$i} should end with sentence punctuation (before thread indicator)"
             );
         }
     }
@@ -382,5 +386,65 @@ class SplitContentForThreadChainTest extends TestCase {
 
         // Then: Should not exceed default max of 5
         $this->assertLessThanOrEqual(5, count($result), 'Should default to max chain length of 5');
+    }
+
+    /**
+     * Test: Thread indicator 🧵 on first post
+     */
+
+    public function test_thread_indicator_on_first_post_when_multiple_posts() {
+        // Given: Long content that requires multiple posts
+        set_test_option('threads_split_preference', 'words');
+        $long_content = str_repeat('This is a sentence that will be repeated many times. ', 30);
+        $post = create_mock_post(1, 'Long Post', $long_content);
+
+        // When: We split the content
+        $result = $this->poster->test_split_content_for_thread_chain($post);
+
+        // Then: First post should end with thread indicator
+        $this->assertGreaterThan(1, count($result), 'Should have multiple posts');
+        $this->assertStringEndsWith('🧵', trim($result[0]), 'First post should end with 🧵');
+    }
+
+    public function test_no_thread_indicator_on_single_post() {
+        // Given: Short content that fits in one post
+        $post = create_mock_post(1, 'Short Title', 'Short content.');
+
+        // When: We split the content
+        $result = $this->poster->test_split_content_for_thread_chain($post);
+
+        // Then: Single post should NOT have thread indicator
+        $this->assertCount(1, $result, 'Should have only one post');
+        $this->assertStringNotContainsString('🧵', $result[0], 'Single post should not have thread indicator');
+    }
+
+    public function test_thread_indicator_not_on_subsequent_posts() {
+        // Given: Long content that requires multiple posts
+        set_test_option('threads_split_preference', 'words');
+        $long_content = str_repeat('Content here. ', 100);
+        $post = create_mock_post(1, 'Title', $long_content);
+
+        // When: We split the content
+        $result = $this->poster->test_split_content_for_thread_chain($post);
+
+        // Then: Only the first post should have thread indicator
+        $this->assertGreaterThan(1, count($result));
+        for ($i = 1; $i < count($result); $i++) {
+            $this->assertStringNotContainsString('🧵', $result[$i], "Post {$i} should not have thread indicator");
+        }
+    }
+
+    public function test_first_post_with_thread_indicator_under_limit() {
+        // Given: Long content
+        set_test_option('threads_split_preference', 'words');
+        $long_content = str_repeat('Test content. ', 80);
+        $post = create_mock_post(1, 'Title', $long_content);
+
+        // When: We split the content
+        $result = $this->poster->test_split_content_for_thread_chain($post);
+
+        // Then: First post including indicator should still be under 500 chars
+        $this->assertGreaterThan(1, count($result));
+        $this->assertLessThanOrEqual(500, strlen($result[0]), 'First post with thread indicator should be under 500 chars');
     }
 }

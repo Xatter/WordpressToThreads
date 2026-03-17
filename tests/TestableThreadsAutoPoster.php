@@ -49,6 +49,56 @@ class TestableThreadsAutoPoster extends ThreadsAutoPoster {
     }
 
     /**
+     * Expose private method for testing using Reflection
+     */
+    public function test_format_time_interval($seconds) {
+        $reflection = new ReflectionClass(get_parent_class($this));
+        $method = $reflection->getMethod('format_time_interval');
+        $method->setAccessible(true);
+        return $method->invokeArgs($this, [$seconds]);
+    }
+
+    /**
+     * Expose private method for testing using Reflection
+     */
+    public function test_is_valid_image_url($url) {
+        $reflection = new ReflectionClass(get_parent_class($this));
+        $method = $reflection->getMethod('is_valid_image_url');
+        $method->setAccessible(true);
+        return $method->invokeArgs($this, [$url]);
+    }
+
+    /**
+     * Expose private method for testing using Reflection
+     */
+    public function test_is_valid_video_url($url) {
+        $reflection = new ReflectionClass(get_parent_class($this));
+        $method = $reflection->getMethod('is_valid_video_url');
+        $method->setAccessible(true);
+        return $method->invokeArgs($this, [$url]);
+    }
+
+    /**
+     * Expose private method for testing using Reflection
+     */
+    public function test_is_token_expired() {
+        $reflection = new ReflectionClass(get_parent_class($this));
+        $method = $reflection->getMethod('is_token_expired');
+        $method->setAccessible(true);
+        return $method->invokeArgs($this, []);
+    }
+
+    /**
+     * Expose private method for testing using Reflection
+     */
+    public function test_extract_post_images_and_videos($post) {
+        $reflection = new ReflectionClass(get_parent_class($this));
+        $method = $reflection->getMethod('extract_post_images_and_videos');
+        $method->setAccessible(true);
+        return $method->invokeArgs($this, [$post]);
+    }
+
+    /**
      * Mock the shorten_url method to avoid actual API calls
      */
     public function shorten_url($url) {

@@ -260,6 +260,55 @@ function clear_mock_posts() {
     $_test_mock_posts = [];
 }
 
+if (!defined('HOUR_IN_SECONDS')) {
+    define('HOUR_IN_SECONDS', 3600);
+}
+
+if (!defined('DAY_IN_SECONDS')) {
+    define('DAY_IN_SECONDS', 86400);
+}
+
+// Mock featured image storage
+global $_test_thumbnails, $_test_attachment_urls;
+$_test_thumbnails = [];
+$_test_attachment_urls = [];
+
+if (!function_exists('get_post_thumbnail_id')) {
+    function get_post_thumbnail_id($post_id) {
+        global $_test_thumbnails;
+        return $_test_thumbnails[$post_id] ?? 0;
+    }
+}
+
+if (!function_exists('wp_get_attachment_image_url')) {
+    function wp_get_attachment_image_url($attachment_id, $size = 'thumbnail') {
+        global $_test_attachment_urls;
+        return $_test_attachment_urls[$attachment_id] ?? false;
+    }
+}
+
+if (!function_exists('has_shortcode')) {
+    function has_shortcode($content, $tag) {
+        return strpos($content, '[' . $tag) !== false;
+    }
+}
+
+function set_test_thumbnail($post_id, $attachment_id) {
+    global $_test_thumbnails;
+    $_test_thumbnails[$post_id] = $attachment_id;
+}
+
+function set_test_attachment_url($attachment_id, $url) {
+    global $_test_attachment_urls;
+    $_test_attachment_urls[$attachment_id] = $url;
+}
+
+function clear_test_media() {
+    global $_test_thumbnails, $_test_attachment_urls;
+    $_test_thumbnails = [];
+    $_test_attachment_urls = [];
+}
+
 // Helper function to create mock post objects
 function create_mock_post($id, $title, $content) {
     $post = new stdClass();
