@@ -886,7 +886,8 @@ class ThreadsAutoPoster {
     }
 
     /**
-     * Create a media container (carousel, single media, or text-only fallback)($media_items, $text, $user_id, $access_token, $fallback_data = null) {
+     */
+    private function create_media_or_text_container($media_items, $text, $user_id, $access_token, $fallback_data = null) {
         $final_container_id = null;
 
         if (!empty($media_items)) {
