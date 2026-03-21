@@ -147,6 +147,12 @@ if (!class_exists('WP_Error')) {
                 $this->errors[$code] = array($message);
             }
         }
+        public function get_error_message($code = '') {
+            if (empty($code)) {
+                $code = array_key_first($this->errors);
+            }
+            return isset($this->errors[$code][0]) ? $this->errors[$code][0] : '';
+        }
     }
 }
 
