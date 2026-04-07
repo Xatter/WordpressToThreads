@@ -187,7 +187,7 @@ class ThreadsAutoPoster {
         ?>
         <div class="wrap">
             <h1>WordPress to Threads & X Settings</h1>
-            <p><a href="<?php echo esc_url(admin_url('options-general.php?page=wordpress-to-threads-setup')); ?>">Run Setup Wizard</a> &mdash; Step-by-step guided setup with instructions</p>
+            <p><a href="<?php echo esc_url(admin_url('options-general.php?page=wordpress-to-threads-setup')); ?>" class="button button-secondary">Run Setup Wizard</a> <span style="margin-left: 8px; color: #646970;">Step-by-step guided setup with instructions</span></p>
             <form method="post" action="options.php">
                 <?php
                 settings_fields('wordpress_to_threads_settings');
