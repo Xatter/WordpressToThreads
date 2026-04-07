@@ -31,15 +31,18 @@ jQuery(document).ready(function($) {
         var $actions = $('#wizard-done-actions');
         $actions.empty();
 
-        var isAuthorized = threads_wizard.threads_authorized || threads_wizard.x_authorized;
+        var needsThreadsAuth = threads_wizard.has_threads_credentials && !threads_wizard.threads_authorized;
+        var needsXAuth = threads_wizard.has_x_credentials && !threads_wizard.x_authorized;
+        var hasAnyAuth = threads_wizard.threads_authorized || threads_wizard.x_authorized;
+        var hasPendingAuth = needsThreadsAuth || needsXAuth;
 
         // Show authorize buttons for any platform with credentials but no token
-        if (threads_wizard.has_threads_credentials && !threads_wizard.threads_authorized) {
+        if (needsThreadsAuth) {
             $actions.append(
                 '<a href="' + threads_wizard.threads_authorize_url + '" class="button button-primary wizard-oauth-btn" data-platform="threads">Authorize with Threads</a>'
             );
         }
-        if (threads_wizard.has_x_credentials && !threads_wizard.x_authorized) {
+        if (needsXAuth) {
             $actions.append(
                 '<a href="' + threads_wizard.x_authorize_url + '" class="button button-primary wizard-oauth-btn" data-platform="x">Authorize with X</a>'
             );
@@ -47,11 +50,11 @@ jQuery(document).ready(function($) {
 
         // Always show Go to Settings
         $actions.append(
-            '<button class="button' + (isAuthorized ? ' button-primary' : '') + ' wizard-finish" data-href="' + threads_wizard.settings_url + '">Go to Settings</button>'
+            '<button class="button' + (!hasPendingAuth ? ' button-primary' : '') + ' wizard-finish" data-href="' + threads_wizard.settings_url + '">Go to Settings</button>'
         );
 
-        // Only show Create Your First Post if at least one platform is authorized
-        if (isAuthorized) {
+        // Only show Create Your First Post if authorized AND nothing pending
+        if (hasAnyAuth && !hasPendingAuth) {
             $actions.append(
                 '<a href="' + threads_wizard.new_post_url + '" class="button">Create Your First Post</a>'
             );
@@ -132,12 +135,15 @@ jQuery(document).ready(function($) {
                     $authActions.addClass('visible');
 
                     // Update local state so Done step knows credentials were saved
+                    // Reset authorized flag — saving new credentials means they need to (re-)authorize
                     if (stepKey === 'threads') {
                         threads_wizard.has_threads_credentials = true;
                         threads_wizard.threads_authorize_url = response.data.authorize_url;
+                        threads_wizard.threads_authorized = false;
                     } else if (stepKey === 'x') {
                         threads_wizard.has_x_credentials = true;
                         threads_wizard.x_authorize_url = response.data.authorize_url;
+                        threads_wizard.x_authorized = false;
                     }
                 }
 
