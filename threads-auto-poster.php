@@ -51,6 +51,8 @@ class ThreadsAutoPoster {
         add_action('wp_ajax_threads_store_publish_choice', array($this, 'handle_store_publish_choice'));
         add_action('wp_ajax_threads_retry_all_pending', array($this, 'handle_retry_all_pending'));
         add_action('wp_ajax_threads_retry_single_pending', array($this, 'handle_retry_single_pending'));
+        add_action('wp_ajax_threads_wizard_save', array($this, 'handle_wizard_save'));
+        add_action('wp_ajax_threads_wizard_set_oauth_return', array($this, 'handle_wizard_set_oauth_return'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         add_action('threads_refresh_token', array($this, 'refresh_access_token'));
         add_action('admin_notices', array($this, 'show_authorization_notices'));
@@ -103,6 +105,12 @@ class ThreadsAutoPoster {
             wp_schedule_event(time(), 'twicedaily', 'threads_refresh_token');
         }
 
+        // Setup wizard option
+        add_option('threads_setup_complete', '0');
+
+        // Trigger redirect to setup wizard on activation
+        set_transient('threads_activation_redirect', true, 30);
+
         // Add custom 12-hour interval if it doesn't exist
         add_filter('cron_schedules', array($this, 'add_custom_cron_intervals'));
         flush_rewrite_rules();
@@ -128,9 +136,30 @@ class ThreadsAutoPoster {
             'wordpress-to-threads',
             array($this, 'admin_page')
         );
+
+        // Hidden setup wizard page (registered under Settings, then removed from menu)
+        add_submenu_page(
+            'options-general.php',
+            'WordPress to Threads & X Setup',
+            'Setup Wizard',
+            'manage_options',
+            'wordpress-to-threads-setup',
+            array($this, 'setup_wizard_page')
+        );
+        remove_submenu_page('options-general.php', 'wordpress-to-threads-setup');
     }
     
     public function admin_init() {
+        // Redirect to setup wizard on first activation
+        if (get_transient('threads_activation_redirect')) {
+            delete_transient('threads_activation_redirect');
+            $is_wizard_page = isset($_GET['page']) && $_GET['page'] === 'wordpress-to-threads-setup';
+            if (!isset($_GET['activate-multi']) && !$is_wizard_page && get_option('threads_setup_complete', '1') !== '1') {
+                wp_safe_redirect(admin_url('options-general.php?page=wordpress-to-threads-setup'));
+                exit;
+            }
+        }
+
         register_setting('wordpress_to_threads_settings', 'threads_app_id');
         register_setting('wordpress_to_threads_settings', 'threads_app_secret');
         register_setting('wordpress_to_threads_settings', 'bitly_access_token');
@@ -158,6 +187,7 @@ class ThreadsAutoPoster {
         ?>
         <div class="wrap">
             <h1>WordPress to Threads & X Settings</h1>
+            <p><a href="<?php echo esc_url(admin_url('options-general.php?page=wordpress-to-threads-setup')); ?>">Run Setup Wizard</a> &mdash; Step-by-step guided setup with instructions</p>
             <form method="post" action="options.php">
                 <?php
                 settings_fields('wordpress_to_threads_settings');
@@ -524,7 +554,14 @@ class ThreadsAutoPoster {
 
             error_log('X OAuth: Successfully authorized as @' . $access_token['screen_name']);
 
-            wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&x_authorized=1'));
+            $wizard_return = get_transient('x_wizard_oauth_return');
+            delete_transient('x_wizard_oauth_return');
+            if ($wizard_return) {
+                $step = intval($wizard_return) > 1 ? intval($wizard_return) : 3;
+                wp_redirect(admin_url('options-general.php?page=wordpress-to-threads-setup&step=' . $step . '&x_authorized=1'));
+            } else {
+                wp_redirect(admin_url('options-general.php?page=wordpress-to-threads&x_authorized=1'));
+            }
             exit;
         } catch (\Exception $e) {
             error_log('X OAuth Error: ' . $e->getMessage());
@@ -1285,6 +1322,24 @@ class ThreadsAutoPoster {
             wp_enqueue_style('threads-x-admin-css', WORDPRESS_TO_THREADS_PLUGIN_URL . 'assets/css/admin.css', array(), WORDPRESS_TO_THREADS_VERSION);
         }
 
+        // Load setup wizard assets
+        if ($hook === 'settings_page_wordpress-to-threads-setup') {
+            wp_enqueue_style('threads-setup-wizard-css', WORDPRESS_TO_THREADS_PLUGIN_URL . 'assets/css/setup-wizard.css', array(), WORDPRESS_TO_THREADS_VERSION);
+            wp_enqueue_script('threads-setup-wizard-js', WORDPRESS_TO_THREADS_PLUGIN_URL . 'assets/js/setup-wizard.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
+            wp_localize_script('threads-setup-wizard-js', 'threads_wizard', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('threads_wizard_nonce'),
+                'settings_url' => admin_url('options-general.php?page=wordpress-to-threads'),
+                'new_post_url' => admin_url('post-new.php'),
+                'initial_step' => isset($_GET['step']) ? intval($_GET['step']) : 1,
+                'threads_authorized' => !empty(get_option('threads_access_token')),
+                'x_authorized' => !empty(get_option('x_access_token')),
+                'x_username' => get_option('x_username', ''),
+                'has_threads_credentials' => !empty(get_option('threads_app_id')) && !empty(get_option('threads_app_secret')),
+                'has_x_credentials' => !empty(get_option('x_api_key')) && !empty(get_option('x_api_secret')),
+            ));
+        }
+
         // Load publish confirmation script on post edit pages
         if ($hook === 'post.php' || $hook === 'post-new.php') {
             wp_enqueue_script('wordpress-to-threads-publish', WORDPRESS_TO_THREADS_PLUGIN_URL . 'publish-confirm.js', array('jquery'), WORDPRESS_TO_THREADS_VERSION, true);
@@ -1429,8 +1484,15 @@ class ThreadsAutoPoster {
                 // Retry any pending posts after successful authorization
                 $this->retry_pending_posts();
                 
-                error_log('Threads OAuth Debug: Redirecting to settings with success');
-                wp_redirect(admin_url('admin.php?page=wordpress-to-threads&authorized=1'));
+                error_log('Threads OAuth Debug: Redirecting with success');
+                $wizard_return = get_transient('threads_wizard_oauth_return');
+                delete_transient('threads_wizard_oauth_return');
+                if ($wizard_return) {
+                    $step = intval($wizard_return) > 1 ? intval($wizard_return) : 2;
+                    wp_redirect(admin_url('options-general.php?page=wordpress-to-threads-setup&step=' . $step . '&authorized=1'));
+                } else {
+                    wp_redirect(admin_url('admin.php?page=wordpress-to-threads&authorized=1'));
+                }
             } else {
                 error_log('Threads OAuth Debug: Long-term token exchange failed, redirecting with error');
                 wp_redirect(admin_url('admin.php?page=wordpress-to-threads&error=1'));
@@ -1857,6 +1919,587 @@ class ThreadsAutoPoster {
         }
     }
     
+    public function setup_wizard_page() {
+        $redirect_uri = $this->get_redirect_uri();
+        $deauthorize_uri = add_query_arg('threads_oauth_action', 'deauthorize', home_url());
+        $data_deletion_uri = add_query_arg('threads_oauth_action', 'data_deletion', home_url());
+        $plugin_url = WORDPRESS_TO_THREADS_PLUGIN_URL;
+        ?>
+        <div class="wrap threads-setup-wizard">
+            <h1>WordPress to Threads & X Setup</h1>
+
+            <!-- Progress Bar -->
+            <div class="wizard-progress">
+                <div class="wizard-progress-step" data-step="1">
+                    <div class="wizard-progress-circle">1</div>
+                    <div class="wizard-progress-label">Welcome</div>
+                </div>
+                <div class="wizard-progress-step" data-step="2">
+                    <div class="wizard-progress-circle">2</div>
+                    <div class="wizard-progress-label">Threads</div>
+                </div>
+                <div class="wizard-progress-step" data-step="3">
+                    <div class="wizard-progress-circle">3</div>
+                    <div class="wizard-progress-label">X / Twitter</div>
+                </div>
+                <div class="wizard-progress-step" data-step="4">
+                    <div class="wizard-progress-circle">4</div>
+                    <div class="wizard-progress-label">Bitly</div>
+                </div>
+                <div class="wizard-progress-step" data-step="5">
+                    <div class="wizard-progress-circle">5</div>
+                    <div class="wizard-progress-label">Preferences</div>
+                </div>
+                <div class="wizard-progress-step" data-step="6">
+                    <div class="wizard-progress-circle">6</div>
+                    <div class="wizard-progress-label">Done!</div>
+                </div>
+            </div>
+
+            <!-- Step 1: Welcome -->
+            <div class="wizard-step" id="wizard-step-1">
+                <h2>Welcome to WordPress to Threads & X</h2>
+                <p class="wizard-step-subtitle">This plugin automatically posts your WordPress blog content to Threads and X (Twitter) when you publish. Let's get everything set up in a few quick steps.</p>
+
+                <div class="wizard-welcome-features">
+                    <div class="wizard-feature-card">
+                        <h4>Auto-Post</h4>
+                        <p>Publish a blog post and it automatically appears on Threads and/or X.</p>
+                    </div>
+                    <div class="wizard-feature-card">
+                        <h4>Smart Formatting</h4>
+                        <p>Handles character limits, URL shortening, and thread chains for long posts.</p>
+                    </div>
+                    <div class="wizard-feature-card">
+                        <h4>Media Support</h4>
+                        <p>Includes featured images and videos from your posts automatically.</p>
+                    </div>
+                </div>
+
+                <div class="wizard-requirements">
+                    <h4>What you'll need</h4>
+                    <ul>
+                        <li>A <strong>Meta for Developers</strong> account (for Threads posting)</li>
+                        <li>A <strong>Threads</strong> account linked to your Meta account</li>
+                        <li><span class="optional">Optional:</span> An <strong>X Developer</strong> account (for X/Twitter posting)</li>
+                        <li><span class="optional">Optional:</span> A <strong>Bitly</strong> account (for URL shortening)</li>
+                    </ul>
+                </div>
+
+                <div class="wizard-nav-center">
+                    <button class="button button-primary button-hero wizard-next">Let's Get Started</button>
+                </div>
+            </div>
+
+            <!-- Step 2: Threads Setup -->
+            <div class="wizard-step" id="wizard-step-2">
+                <h2>Connect to Threads</h2>
+                <p class="wizard-step-subtitle">First, we need to create a Meta App and connect it to your Threads account. Follow the steps below.</p>
+
+                <div class="wizard-auth-status"></div>
+
+                <div class="wizard-instructions">
+                    <h3>Step A: Create a Meta App</h3>
+                    <ol>
+                        <li>Go to <a href="https://developers.facebook.com/" target="_blank">Meta for Developers</a> and log in</li>
+                        <li>Click <strong>"My Apps"</strong> in the top navigation, then <strong>"Create App"</strong></li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-meta-my-apps.png'); ?>" alt="My Apps page with Create App button">
+                        <div class="wizard-screenshot-caption">Click "My Apps" then "Create App" on the Meta for Developers site</div>
+                    </div>
+
+                    <ol start="3">
+                        <li>Give your app a name (e.g., "My WordPress Poster") and click <strong>Next</strong></li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-meta-create-app.png'); ?>" alt="Create an app form with app name and email">
+                        <div class="wizard-screenshot-caption">Enter your app name and contact email, then click Next</div>
+                    </div>
+
+                    <ol start="4">
+                        <li>On the <strong>"Use cases"</strong> step, find <strong>"Access the Threads API"</strong> and check the box</li>
+                        <li>Click <strong>Next</strong></li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-meta-use-cases.png'); ?>" alt="Use cases selection with Access the Threads API checked">
+                        <div class="wizard-screenshot-caption">Check "Access the Threads API" and click Next</div>
+                    </div>
+
+                    <ol start="6">
+                        <li>(Optional) Associate it with a business</li>
+                        <li>Click <strong>Next</strong> until you reach the Overview, then click <strong>"Create App"</strong></li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-meta-overview.png'); ?>" alt="App creation overview with Create app button">
+                        <div class="wizard-screenshot-caption">Review the overview and click "Create app"</div>
+                    </div>
+
+                    <h3>Step B: Add permissions and configure redirect URIs</h3>
+                    <ol>
+                        <li>Click <strong>Use Cases</strong> in the left sidebar, then click <strong>Customize</strong></li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-meta-use-cases-customize.png'); ?>" alt="Use Cases page with Customize button">
+                        <div class="wizard-screenshot-caption">Click "Customize" next to "Access the Threads API"</div>
+                    </div>
+
+                    <ol start="2">
+                        <li>On the <strong>Permissions and features</strong> tab, find <strong>threads_content_publish</strong> and click <strong>+ Add</strong></li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-meta-permissions.png'); ?>" alt="Permissions and features list with threads_content_publish">
+                        <div class="wizard-screenshot-caption">Click "+ Add" next to threads_content_publish</div>
+                    </div>
+
+                    <ol start="3">
+                        <li>On the left, click <strong>Settings</strong></li>
+                        <li>Add the following redirect URIs to the corresponding fields:</li>
+                    </ol>
+
+                    <div class="wizard-uri-list">
+                        <code><strong>Redirect Callback URLs:</strong> <?php echo esc_html($redirect_uri); ?></code>
+                        <code><strong>Uninstall Callback URL:</strong> <?php echo esc_html($deauthorize_uri); ?></code>
+                        <code><strong>Delete Callback URL:</strong> <?php echo esc_html($data_deletion_uri); ?></code>
+                    </div>
+
+                    <div class="wizard-callout wizard-callout-warning">
+                        <strong>Redirect Callback URL: You must press Enter after pasting!</strong>
+                        The Redirect Callback URLs field is a tag-style input. After pasting the URL, press <strong>Enter</strong> (or <strong>Tab</strong>) so it converts into a tag with an <strong>&times;</strong> to remove it. If the URL just sits as plain text in the field, Meta won't save it. The other two fields (Uninstall and Delete) work as normal text inputs.
+                    </div>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-meta-settings-filled.png'); ?>" alt="Settings page with redirect URI saved as a tag with an X to remove it">
+                        <div class="wizard-screenshot-caption">The Redirect Callback URL should appear as a tag with an &times; — like this. If it's still plain text, press Enter to confirm it.</div>
+                    </div>
+
+                    <div class="wizard-callout wizard-callout-info">
+                        <strong>Domain matching</strong>
+                        Make sure your domain matches exactly — including <code>www</code> vs non-<code>www</code> and <code>https://</code> vs <code>http://</code>.
+                    </div>
+
+                    <h3>Step C: Copy your App ID and App Secret</h3>
+                    <ol>
+                        <li>On the same Settings page (shown above), find the <strong>Threads app ID</strong> and <strong>Threads app secret</strong> at the top</li>
+                        <li>Copy them and paste them into the fields below</li>
+                    </ol>
+                </div>
+
+                <div class="wizard-field">
+                    <label for="wizard-threads-app-id">Threads App ID</label>
+                    <input type="text" id="wizard-threads-app-id" data-wizard-field="threads_app_id" value="<?php echo esc_attr(get_option('threads_app_id')); ?>" placeholder="Enter your App ID" />
+                </div>
+
+                <div class="wizard-field">
+                    <label for="wizard-threads-app-secret">Threads App Secret</label>
+                    <input type="password" id="wizard-threads-app-secret" data-wizard-field="threads_app_secret" value="<?php echo esc_attr(get_option('threads_app_secret')); ?>" placeholder="Enter your App Secret" />
+                </div>
+
+                <div class="wizard-save-status"></div>
+
+                <button class="button button-primary wizard-save-credentials" data-step="threads">
+                    Save Credentials <span class="wizard-spinner spinner"></span>
+                </button>
+
+                <div class="wizard-auth-actions">
+                    <div class="wizard-instructions">
+                        <h3>Step D: Authorize</h3>
+                        <p>Click the button below to authorize this plugin with your Threads account. You'll be redirected to Threads and then back here.</p>
+                    </div>
+
+                    <a href="<?php echo esc_url($this->get_authorize_url()); ?>" class="button button-primary wizard-oauth-btn" data-platform="threads">Authorize with Threads</a>
+                </div>
+
+                <div class="wizard-nav">
+                    <button class="button wizard-back">&larr; Back</button>
+                    <div class="wizard-nav-right">
+                        <button class="button button-primary wizard-next">Next &rarr;</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: X (Twitter) Setup -->
+            <div class="wizard-step" id="wizard-step-3">
+                <h2>Connect to X (Twitter)</h2>
+                <p class="wizard-step-subtitle">Optionally connect your X account to cross-post your content there too.</p>
+
+                <div class="wizard-auth-status"></div>
+
+                <div class="wizard-instructions">
+                    <h3>Get your X API credentials</h3>
+                    <ol>
+                        <li>Go to the <a href="https://developer.twitter.com/en/portal/projects-and-apps" target="_blank">X Developer Portal</a> and log in</li>
+                        <li>Create a new <strong>Project</strong> and <strong>App</strong> (or use an existing one)</li>
+                        <li>In your app's <strong>Keys and Tokens</strong> tab, find your <strong>API Key</strong> (Consumer Key) and <strong>API Secret</strong> (Consumer Secret)</li>
+                        <li>Make sure your app has <strong>Read and Write</strong> permissions enabled</li>
+                        <li>Under <strong>Authentication Settings</strong>, set the callback URL to:<br><code><?php echo esc_html(admin_url('admin-post.php?action=x_oauth_callback')); ?></code></li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-x-api-keys.svg'); ?>" alt="X Developer Portal API keys">
+                        <div class="wizard-screenshot-caption">Where to find your API Key and Secret in the X Developer Portal</div>
+                    </div>
+                </div>
+
+                <div class="wizard-field">
+                    <label for="wizard-x-api-key">X API Key (Consumer Key)</label>
+                    <input type="text" id="wizard-x-api-key" data-wizard-field="x_api_key" value="<?php echo esc_attr(get_option('x_api_key')); ?>" placeholder="Enter your API Key" />
+                </div>
+
+                <div class="wizard-field">
+                    <label for="wizard-x-api-secret">X API Secret (Consumer Secret)</label>
+                    <input type="password" id="wizard-x-api-secret" data-wizard-field="x_api_secret" value="<?php echo esc_attr(get_option('x_api_secret')); ?>" placeholder="Enter your API Secret" />
+                </div>
+
+                <div class="wizard-save-status"></div>
+
+                <button class="button button-primary wizard-save-credentials" data-step="x">
+                    Save Credentials <span class="wizard-spinner spinner"></span>
+                </button>
+
+                <div class="wizard-auth-actions">
+                    <p>Credentials saved! Click below to authorize with X. You'll be redirected and then brought back here.</p>
+                    <a href="<?php echo esc_url($this->get_x_authorize_url()); ?>" class="button button-primary wizard-oauth-btn" data-platform="x">Authorize with X</a>
+                </div>
+
+                <div class="wizard-nav">
+                    <button class="button wizard-back">&larr; Back</button>
+                    <div class="wizard-nav-right">
+                        <a href="#" class="wizard-skip-link wizard-skip">Skip this step</a>
+                        <button class="button button-primary wizard-next">Next &rarr;</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: Bitly Setup -->
+            <div class="wizard-step" id="wizard-step-4">
+                <h2>URL Shortening with Bitly</h2>
+                <p class="wizard-step-subtitle">Bitly shortens the links in your posts, saving characters and giving you click tracking. This step is optional but recommended.</p>
+
+                <div class="wizard-instructions">
+                    <h3>Get your Bitly access token</h3>
+                    <ol>
+                        <li>Go to <a href="https://bitly.com/" target="_blank">Bitly</a> and sign in (or create a free account)</li>
+                        <li>Navigate to <strong>Settings &rarr; Developer Settings</strong></li>
+                        <li>Click <strong>"Generate Token"</strong> and enter your password to confirm</li>
+                        <li>Copy the generated access token and paste it below</li>
+                    </ol>
+
+                    <div class="wizard-screenshot">
+                        <img src="<?php echo esc_url($plugin_url . 'images/wizard/wizard-bitly-token.svg'); ?>" alt="Bitly developer settings">
+                        <div class="wizard-screenshot-caption">Where to generate your access token in Bitly's Developer Settings</div>
+                    </div>
+
+                    <div class="wizard-callout wizard-callout-info">
+                        <strong>Why use URL shortening?</strong>
+                        Threads has a 500-character limit. Shortened URLs use fewer characters, leaving more room for your content. Without Bitly, full WordPress URLs will be included instead.
+                    </div>
+                </div>
+
+                <div class="wizard-field">
+                    <label for="wizard-bitly-token">Bitly Access Token</label>
+                    <input type="text" id="wizard-bitly-token" data-wizard-field="bitly_access_token" value="<?php echo esc_attr(get_option('bitly_access_token')); ?>" placeholder="Enter your Bitly access token" />
+                </div>
+
+                <div class="wizard-save-status"></div>
+
+                <button class="button button-primary wizard-save-credentials" data-step="bitly">
+                    Save Token <span class="wizard-spinner spinner"></span>
+                </button>
+
+                <div class="wizard-nav">
+                    <button class="button wizard-back">&larr; Back</button>
+                    <div class="wizard-nav-right">
+                        <a href="#" class="wizard-skip-link wizard-skip">Skip this step</a>
+                        <button class="button button-primary wizard-next">Next &rarr;</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Posting Preferences -->
+            <div class="wizard-step" id="wizard-step-5">
+                <h2>Posting Preferences</h2>
+                <p class="wizard-step-subtitle">Configure how your posts are shared to social media. You can change any of these later in Settings.</p>
+
+                <div class="wizard-pref-group">
+                    <h3>Auto-Posting</h3>
+                    <p>When enabled, new blog posts will automatically be shared when you click Publish.</p>
+
+                    <div class="wizard-checkbox-field">
+                        <input type="checkbox" id="wizard-threads-auto" data-wizard-field="threads_auto_post_enabled" value="1" <?php checked(get_option('threads_auto_post_enabled'), '1'); ?> />
+                        <label for="wizard-threads-auto" class="wizard-checkbox-label">
+                            <strong>Auto-post to Threads</strong>
+                            <span>Automatically share new posts to your Threads account</span>
+                        </label>
+                    </div>
+
+                    <div class="wizard-checkbox-field">
+                        <input type="checkbox" id="wizard-x-auto" data-wizard-field="x_auto_post_enabled" value="1" <?php checked(get_option('x_auto_post_enabled'), '1'); ?> />
+                        <label for="wizard-x-auto" class="wizard-checkbox-label">
+                            <strong>Auto-post to X</strong>
+                            <span>Automatically share new posts to your X account</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="wizard-pref-group">
+                    <h3>Media</h3>
+                    <p>Include images and videos from your posts when sharing to social media.</p>
+
+                    <div class="wizard-checkbox-field">
+                        <input type="checkbox" id="wizard-threads-media" data-wizard-field="threads_include_media" value="1" <?php checked(get_option('threads_include_media', '1'), '1'); ?> />
+                        <label for="wizard-threads-media" class="wizard-checkbox-label">
+                            <strong>Include media on Threads</strong>
+                            <span>Attach images and videos from your posts</span>
+                        </label>
+                    </div>
+
+                    <div class="wizard-checkbox-field">
+                        <input type="checkbox" id="wizard-x-media" data-wizard-field="x_include_media" value="1" <?php checked(get_option('x_include_media', '1'), '1'); ?> />
+                        <label for="wizard-x-media" class="wizard-checkbox-label">
+                            <strong>Include media on X</strong>
+                            <span>Attach images from your posts</span>
+                        </label>
+                    </div>
+
+                    <div class="wizard-select-field">
+                        <label for="wizard-media-priority">Media Priority</label>
+                        <select id="wizard-media-priority" data-wizard-field="threads_media_priority">
+                            <option value="featured" <?php selected(get_option('threads_media_priority', 'featured'), 'featured'); ?>>Featured Image First</option>
+                            <option value="content" <?php selected(get_option('threads_media_priority', 'featured'), 'content'); ?>>Content Images First</option>
+                            <option value="video" <?php selected(get_option('threads_media_priority', 'featured'), 'video'); ?>>Videos First</option>
+                        </select>
+                        <p class="description">Which media to prioritize when your post has multiple images or videos.</p>
+                    </div>
+                </div>
+
+                <div class="wizard-pref-group">
+                    <h3>Thread Chains</h3>
+                    <p>For posts longer than 500 characters, the plugin can create a series of connected posts (a "thread") instead of truncating your content.</p>
+
+                    <div class="wizard-checkbox-field">
+                        <input type="checkbox" id="wizard-enable-chains" data-wizard-field="threads_enable_thread_chains" value="1" <?php checked(get_option('threads_enable_thread_chains', '1'), '1'); ?> />
+                        <label for="wizard-enable-chains" class="wizard-checkbox-label">
+                            <strong>Enable thread chains</strong>
+                            <span>Split long posts into multiple connected Threads posts</span>
+                        </label>
+                    </div>
+
+                    <div class="wizard-select-field">
+                        <label for="wizard-max-chain">Maximum thread length</label>
+                        <select id="wizard-max-chain" data-wizard-field="threads_max_chain_length">
+                            <?php
+                            $max_length = get_option('threads_max_chain_length', '5');
+                            for ($i = 2; $i <= 10; $i++) {
+                                echo '<option value="' . $i . '"' . selected($max_length, $i, false) . '>' . $i . ' posts</option>';
+                            }
+                            ?>
+                        </select>
+                        <p class="description">Maximum number of posts in a thread (including the main post).</p>
+                    </div>
+
+                    <div class="wizard-select-field">
+                        <label for="wizard-split-method">Content splitting method</label>
+                        <select id="wizard-split-method" data-wizard-field="threads_split_preference">
+                            <option value="sentences" <?php selected(get_option('threads_split_preference', 'sentences'), 'sentences'); ?>>Split at sentence boundaries</option>
+                            <option value="paragraphs" <?php selected(get_option('threads_split_preference', 'sentences'), 'paragraphs'); ?>>Split at paragraph boundaries</option>
+                            <option value="words" <?php selected(get_option('threads_split_preference', 'sentences'), 'words'); ?>>Split at word boundaries</option>
+                        </select>
+                        <p class="description">How to intelligently split long content across thread posts.</p>
+                    </div>
+
+                    <div class="wizard-thread-example">
+                        <div class="wizard-thread-example-title">Example thread chain</div>
+                        <div class="wizard-thread-post">
+                            <div class="wizard-thread-post-label">Post 1 of 3</div>
+                            My Amazing Blog Post Title<br><br>
+                            This is the beginning of my blog post content. It covers the main points and introduces the topic...
+                        </div>
+                        <div class="wizard-thread-post">
+                            <div class="wizard-thread-post-label">Post 2 of 3</div>
+                            ...continuing with more details and supporting information about the topic at hand...
+                        </div>
+                        <div class="wizard-thread-post">
+                            <div class="wizard-thread-post-label">Post 3 of 3</div>
+                            ...wrapping up with final thoughts.<br><br>
+                            Read more: https://bit.ly/abc123
+                        </div>
+                    </div>
+                </div>
+
+                <div class="wizard-save-status"></div>
+
+                <div class="wizard-nav">
+                    <button class="button wizard-back">&larr; Back</button>
+                    <div class="wizard-nav-right">
+                        <button class="button button-primary wizard-save-preferences">Save & Finish <span class="wizard-spinner spinner"></span></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 6: Done -->
+            <div class="wizard-step" id="wizard-step-6">
+                <h2>You're All Set!</h2>
+                <p class="wizard-step-subtitle">Here's a summary of your configuration.</p>
+
+                <div class="wizard-summary">
+                    <div class="wizard-summary-item">
+                        <div class="wizard-summary-icon <?php echo !empty(get_option('threads_access_token')) ? 'connected' : 'skipped'; ?>">
+                            <?php echo !empty(get_option('threads_access_token')) ? '&#10003;' : '&mdash;'; ?>
+                        </div>
+                        <div class="wizard-summary-text">
+                            <strong>Threads</strong>
+                            <span><?php
+                                if (!empty(get_option('threads_access_token'))) {
+                                    echo 'Connected (User ID: ' . esc_html(get_option('threads_user_id')) . ')';
+                                } else {
+                                    echo 'Not connected &mdash; you can set this up later in Settings';
+                                }
+                            ?></span>
+                        </div>
+                    </div>
+
+                    <div class="wizard-summary-item">
+                        <div class="wizard-summary-icon <?php echo !empty(get_option('x_access_token')) ? 'connected' : 'skipped'; ?>">
+                            <?php echo !empty(get_option('x_access_token')) ? '&#10003;' : '&mdash;'; ?>
+                        </div>
+                        <div class="wizard-summary-text">
+                            <strong>X (Twitter)</strong>
+                            <span><?php
+                                $x_username = get_option('x_username');
+                                if (!empty(get_option('x_access_token'))) {
+                                    echo 'Connected' . ($x_username ? ' as @' . esc_html($x_username) : '');
+                                } else {
+                                    echo 'Skipped &mdash; you can connect later in Settings';
+                                }
+                            ?></span>
+                        </div>
+                    </div>
+
+                    <div class="wizard-summary-item">
+                        <div class="wizard-summary-icon <?php echo !empty(get_option('bitly_access_token')) ? 'connected' : 'skipped'; ?>">
+                            <?php echo !empty(get_option('bitly_access_token')) ? '&#10003;' : '&mdash;'; ?>
+                        </div>
+                        <div class="wizard-summary-text">
+                            <strong>Bitly URL Shortening</strong>
+                            <span><?php echo !empty(get_option('bitly_access_token')) ? 'Configured' : 'Skipped &mdash; full URLs will be used in posts'; ?></span>
+                        </div>
+                    </div>
+
+                    <div class="wizard-summary-item">
+                        <div class="wizard-summary-icon <?php echo (get_option('threads_auto_post_enabled') === '1' || get_option('x_auto_post_enabled') === '1') ? 'connected' : 'skipped'; ?>">
+                            <?php echo (get_option('threads_auto_post_enabled') === '1' || get_option('x_auto_post_enabled') === '1') ? '&#10003;' : '&mdash;'; ?>
+                        </div>
+                        <div class="wizard-summary-text">
+                            <strong>Auto-Posting</strong>
+                            <span><?php
+                                $platforms = array();
+                                if (get_option('threads_auto_post_enabled') === '1') $platforms[] = 'Threads';
+                                if (get_option('x_auto_post_enabled') === '1') $platforms[] = 'X';
+                                echo !empty($platforms) ? 'Enabled for ' . implode(' and ', $platforms) : 'Disabled &mdash; you can enable it in Settings';
+                            ?></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="wizard-done-actions">
+                    <?php if (!empty(get_option('threads_access_token')) || !empty(get_option('x_access_token'))) : ?>
+                        <button class="button button-primary wizard-finish" data-href="<?php echo esc_url(admin_url('options-general.php?page=wordpress-to-threads')); ?>">Go to Settings</button>
+                        <a href="<?php echo esc_url(admin_url('post-new.php')); ?>" class="button">Create Your First Post</a>
+                    <?php else : ?>
+                        <?php
+                        $has_threads_creds = !empty(get_option('threads_app_id')) && !empty(get_option('threads_app_secret'));
+                        $has_x_creds = !empty(get_option('x_api_key')) && !empty(get_option('x_api_secret'));
+                        ?>
+                        <?php if ($has_threads_creds && empty(get_option('threads_access_token'))) : ?>
+                            <a href="<?php echo esc_url($this->get_authorize_url()); ?>" class="button button-primary wizard-oauth-btn" data-platform="threads">Authorize with Threads</a>
+                        <?php endif; ?>
+                        <?php if ($has_x_creds && empty(get_option('x_access_token'))) : ?>
+                            <a href="<?php echo esc_url($this->get_x_authorize_url()); ?>" class="button button-primary wizard-oauth-btn" data-platform="x">Authorize with X</a>
+                        <?php endif; ?>
+                        <button class="button wizard-finish" data-href="<?php echo esc_url(admin_url('options-general.php?page=wordpress-to-threads')); ?>">Skip to Settings</button>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    public function handle_wizard_save() {
+        check_ajax_referer('threads_wizard_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+
+        $step = sanitize_text_field($_POST['step']);
+
+        switch ($step) {
+            case 'threads':
+                update_option('threads_app_id', sanitize_text_field($_POST['threads_app_id']));
+                update_option('threads_app_secret', sanitize_text_field($_POST['threads_app_secret']));
+                $authorize_url = $this->get_authorize_url();
+                wp_send_json_success(array('authorize_url' => $authorize_url));
+                break;
+
+            case 'x':
+                update_option('x_api_key', sanitize_text_field($_POST['x_api_key']));
+                update_option('x_api_secret', sanitize_text_field($_POST['x_api_secret']));
+                $authorize_url = $this->get_x_authorize_url();
+                wp_send_json_success(array('authorize_url' => $authorize_url));
+                break;
+
+            case 'bitly':
+                update_option('bitly_access_token', sanitize_text_field($_POST['bitly_access_token']));
+                wp_send_json_success();
+                break;
+
+            case 'preferences':
+                update_option('threads_auto_post_enabled', sanitize_text_field($_POST['threads_auto_post_enabled']) === '1' ? '1' : '0');
+                update_option('x_auto_post_enabled', sanitize_text_field($_POST['x_auto_post_enabled']) === '1' ? '1' : '0');
+                update_option('threads_include_media', sanitize_text_field($_POST['threads_include_media']) === '1' ? '1' : '0');
+                update_option('x_include_media', sanitize_text_field($_POST['x_include_media']) === '1' ? '1' : '0');
+                update_option('threads_media_priority', sanitize_text_field($_POST['threads_media_priority']));
+                update_option('threads_enable_thread_chains', sanitize_text_field($_POST['threads_enable_thread_chains']) === '1' ? '1' : '0');
+                update_option('threads_max_chain_length', intval($_POST['threads_max_chain_length']));
+                update_option('threads_split_preference', sanitize_text_field($_POST['threads_split_preference']));
+                wp_send_json_success();
+                break;
+
+            case 'complete':
+                update_option('threads_setup_complete', '1');
+                wp_send_json_success();
+                break;
+
+            default:
+                wp_send_json_error('Unknown step');
+        }
+    }
+
+    public function handle_wizard_set_oauth_return() {
+        check_ajax_referer('threads_wizard_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+
+        $platform = sanitize_text_field($_POST['platform']);
+        $return_step = isset($_POST['return_step']) ? intval($_POST['return_step']) : 0;
+        if (in_array($platform, array('threads', 'x'), true)) {
+            $return_data = $return_step > 0 ? strval($return_step) : '1';
+            set_transient($platform . '_wizard_oauth_return', $return_data, 10 * MINUTE_IN_SECONDS);
+            wp_send_json_success();
+        } else {
+            wp_send_json_error('Invalid platform');
+        }
+    }
+
     public function show_authorization_notices() {
         // Show notice if authorization is needed
         if (get_transient('threads_auth_needed_notice')) {

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
+  <rect width="800" height="450" fill="#f0f0f1" rx="8"/>
+  <rect x="24" y="24" width="752" height="402" fill="#fff" rx="6" stroke="#c3c4c7" stroke-width="1"/>
+  <circle cx="400" cy="180" r="48" fill="#dcdcde"/>
+  <rect x="380" y="160" width="40" height="12" rx="2" fill="#a7aaad"/>
+  <rect x="380" y="180" width="40" height="12" rx="2" fill="#a7aaad"/>
+  <text x="400" y="270" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#1d2327">Screenshot: Where to find App ID and App Secret</text>
+  <text x="400" y="300" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#646970">Replace this file with a screenshot of the Meta app dashboard</text>
+  <text x="400" y="320" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#646970">showing where the App ID and App Secret fields are located</text>
+  <rect x="300" y="360" width="200" height="40" rx="4" fill="#dcdcde"/>
+  <text x="400" y="385" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" fill="#646970">800 x 450 recommended</text>
+</svg>
