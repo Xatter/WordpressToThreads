@@ -25,48 +25,49 @@ A WordPress plugin that automatically posts your blog posts to Threads with smar
 1. Download the plugin files
 2. Upload the `WordpressToThreads` folder to your `/wp-content/plugins/` directory
 3. Activate the plugin through the 'Plugins' menu in WordPress
-4. Go to Settings → WordPress to Threads to configure
+4. The **Setup Wizard** will launch automatically on first activation — follow the step-by-step guide to connect your accounts
+
+To re-run the wizard later, go to **Settings → Threads & X** and click **Run Setup Wizard**.
 
 ## Setup Instructions
 
-### Step 1: Create a Threads App
+The setup wizard walks you through everything with screenshots, but here's a summary of what's involved:
 
 [▶ Watch the Meta App setup walkthrough video](https://youtu.be/-pRZlsxzGQo)
 
+### Step 1: Create a Meta App
+
 1. Go to [Meta for Developers](https://developers.facebook.com/)
-2. Click "My Apps" and create a new app
-3. Select "Other" as the app type
-4. Add the Threads product to your app
-5. Note your **App ID** and **App Secret**
+2. Click **"My Apps"** → **"Create App"**
+3. Name your app and click **Next**
+4. On the **Use cases** step, check **"Access the Threads API"** and click **Next**
+5. (Optional) Associate with a business
+6. Click **Next** until you reach the Overview, then click **"Create App"**
 
-### Step 2: Configure OAuth Redirect URLs
+### Step 2: Add Permissions and Configure Redirect URIs
 
-In your Meta app settings, add these OAuth redirect URIs:
-- `https://yourdomain.com/?threads_oauth_action=redirect`
-- `https://yourdomain.com/?threads_oauth_action=deauthorize`
-- `https://yourdomain.com/?threads_oauth_action=data_deletion`
+1. Click **Use Cases** → **Customize**
+2. For **threads_content_publish**, click **+ Add**
+3. Click **Settings** in the left sidebar
+4. Add these redirect URIs to the corresponding fields:
+   - **Redirect Callback URLs:** `https://yourdomain.com/?threads_oauth_action=redirect`
+   - **Uninstall Callback URL:** `https://yourdomain.com/?threads_oauth_action=deauthorize`
+   - **Delete Callback URL:** `https://yourdomain.com/?threads_oauth_action=data_deletion`
+
+> **Important:** For the Redirect Callback URL, you must press **Enter** after pasting so it converts into a tag with an **×** to remove it. If it stays as plain text, Meta won't save it.
 
 Replace `yourdomain.com` with your actual domain.
 
+### Step 3: Enter Credentials and Authorize
 
-### Step 3: Get Bitly Access Token (Optional)
+1. Copy your **Threads App ID** and **Threads App Secret** from the same Settings page
+2. Enter them in the plugin (via the wizard or **Settings → Threads & X**)
+3. Click **Authorize with Threads** and complete the OAuth flow
 
-1. Go to [Bitly](https://bitly.com/) and create an account
-2. Go to Settings → Developer Settings
-3. Generate a new access token
-4. Copy the token for use in the plugin
+### Step 4: Optional — Connect X and Bitly
 
-### Step 4: Configure the Plugin
-
-1. In WordPress, go to **Settings → WordPress to Threads**
-2. Enter your **Threads App ID** and **Threads App Secret**
-3. Enter your **Bitly Access Token** (optional)
-4. Click **Save Changes**
-5. Click **Authorize with Threads**
-6. Complete the OAuth authorization on Threads
-7. You'll be redirected back with authorization complete
-
-![Correct Credentials Location](./images/Correct%20Credentials.png)
+- **X (Twitter):** Enter your API Key and Secret from the [X Developer Portal](https://developer.twitter.com/en/portal/projects-and-apps), then authorize
+- **Bitly:** Enter your access token from Bitly's Developer Settings for URL shortening
 
 ## Usage
 
