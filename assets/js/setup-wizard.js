@@ -11,6 +11,11 @@ jQuery(document).ready(function($) {
         updateProgressBar(step);
         currentStep = step;
 
+        // Build Done step actions dynamically based on current state
+        if (step === 6) {
+            buildDoneActions();
+        }
+
         // Update URL without reload
         if (window.history.replaceState) {
             var url = new URL(window.location);
@@ -20,6 +25,37 @@ jQuery(document).ready(function($) {
 
         // Scroll to top of wizard
         $('html, body').animate({ scrollTop: $('.threads-setup-wizard').offset().top - 40 }, 200);
+    }
+
+    function buildDoneActions() {
+        var $actions = $('#wizard-done-actions');
+        $actions.empty();
+
+        var isAuthorized = threads_wizard.threads_authorized || threads_wizard.x_authorized;
+
+        // Show authorize buttons for any platform with credentials but no token
+        if (threads_wizard.has_threads_credentials && !threads_wizard.threads_authorized) {
+            $actions.append(
+                '<a href="' + threads_wizard.threads_authorize_url + '" class="button button-primary wizard-oauth-btn" data-platform="threads">Authorize with Threads</a>'
+            );
+        }
+        if (threads_wizard.has_x_credentials && !threads_wizard.x_authorized) {
+            $actions.append(
+                '<a href="' + threads_wizard.x_authorize_url + '" class="button button-primary wizard-oauth-btn" data-platform="x">Authorize with X</a>'
+            );
+        }
+
+        // Always show Go to Settings
+        $actions.append(
+            '<button class="button' + (isAuthorized ? ' button-primary' : '') + ' wizard-finish" data-href="' + threads_wizard.settings_url + '">Go to Settings</button>'
+        );
+
+        // Only show Create Your First Post if at least one platform is authorized
+        if (isAuthorized) {
+            $actions.append(
+                '<a href="' + threads_wizard.new_post_url + '" class="button">Create Your First Post</a>'
+            );
+        }
     }
 
     function updateProgressBar(step) {
@@ -94,6 +130,15 @@ jQuery(document).ready(function($) {
                     var $authActions = $stepEl.find('.wizard-auth-actions');
                     $authActions.find('.wizard-oauth-btn').attr('href', response.data.authorize_url);
                     $authActions.addClass('visible');
+
+                    // Update local state so Done step knows credentials were saved
+                    if (stepKey === 'threads') {
+                        threads_wizard.has_threads_credentials = true;
+                        threads_wizard.threads_authorize_url = response.data.authorize_url;
+                    } else if (stepKey === 'x') {
+                        threads_wizard.has_x_credentials = true;
+                        threads_wizard.x_authorize_url = response.data.authorize_url;
+                    }
                 }
 
                 if (onSuccess) onSuccess();

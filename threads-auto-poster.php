@@ -1337,6 +1337,8 @@ class ThreadsAutoPoster {
                 'x_username' => get_option('x_username', ''),
                 'has_threads_credentials' => !empty(get_option('threads_app_id')) && !empty(get_option('threads_app_secret')),
                 'has_x_credentials' => !empty(get_option('x_api_key')) && !empty(get_option('x_api_secret')),
+                'threads_authorize_url' => $this->get_authorize_url(),
+                'x_authorize_url' => $this->get_x_authorize_url(),
             ));
         }
 
@@ -2408,23 +2410,8 @@ class ThreadsAutoPoster {
                     </div>
                 </div>
 
-                <div class="wizard-done-actions">
-                    <?php if (!empty(get_option('threads_access_token')) || !empty(get_option('x_access_token'))) : ?>
-                        <button class="button button-primary wizard-finish" data-href="<?php echo esc_url(admin_url('options-general.php?page=wordpress-to-threads')); ?>">Go to Settings</button>
-                        <a href="<?php echo esc_url(admin_url('post-new.php')); ?>" class="button">Create Your First Post</a>
-                    <?php else : ?>
-                        <?php
-                        $has_threads_creds = !empty(get_option('threads_app_id')) && !empty(get_option('threads_app_secret'));
-                        $has_x_creds = !empty(get_option('x_api_key')) && !empty(get_option('x_api_secret'));
-                        ?>
-                        <?php if ($has_threads_creds && empty(get_option('threads_access_token'))) : ?>
-                            <a href="<?php echo esc_url($this->get_authorize_url()); ?>" class="button button-primary wizard-oauth-btn" data-platform="threads">Authorize with Threads</a>
-                        <?php endif; ?>
-                        <?php if ($has_x_creds && empty(get_option('x_access_token'))) : ?>
-                            <a href="<?php echo esc_url($this->get_x_authorize_url()); ?>" class="button button-primary wizard-oauth-btn" data-platform="x">Authorize with X</a>
-                        <?php endif; ?>
-                        <button class="button wizard-finish" data-href="<?php echo esc_url(admin_url('options-general.php?page=wordpress-to-threads')); ?>">Skip to Settings</button>
-                    <?php endif; ?>
+                <div class="wizard-done-actions" id="wizard-done-actions">
+                    <!-- Populated by JS based on current auth state -->
                 </div>
             </div>
         </div>
