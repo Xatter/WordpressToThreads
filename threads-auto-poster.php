@@ -206,7 +206,8 @@ class ThreadsAutoPoster {
                     <tr>
                         <th scope="row">Threads App ID</th>
                         <td>
-                            <input type="text" name="threads_app_id" value="<?php echo esc_attr(get_option('threads_app_id')); ?>" class="regular-text" />
+                            <input type="password" name="threads_app_id" value="<?php echo esc_attr(get_option('threads_app_id')); ?>" class="regular-text" />
+                            <button type="button" class="button button-small threads-toggle-visibility">Show</button>
                             <p class="description">Your Threads App ID from Meta for Developers.</p>
                         </td>
                     </tr>
@@ -214,6 +215,7 @@ class ThreadsAutoPoster {
                         <th scope="row">Threads App Secret</th>
                         <td>
                             <input type="password" name="threads_app_secret" value="<?php echo esc_attr(get_option('threads_app_secret')); ?>" class="regular-text" />
+                            <button type="button" class="button button-small threads-toggle-visibility">Show</button>
                             <p class="description">Your Threads App Secret from Meta for Developers.</p>
                         </td>
                     </tr>
@@ -256,7 +258,8 @@ class ThreadsAutoPoster {
                     <tr>
                         <th scope="row">Bitly Access Token (optional, but recommended)</th>
                         <td>
-                            <input type="text" name="bitly_access_token" value="<?php echo esc_attr(get_option('bitly_access_token')); ?>" class="regular-text" />
+                            <input type="password" name="bitly_access_token" value="<?php echo esc_attr(get_option('bitly_access_token')); ?>" class="regular-text" />
+                            <button type="button" class="button button-small threads-toggle-visibility">Show</button>
                             <p class="description">Your Bitly API access token for URL shortening.</p>
                         </td>
                     </tr>
@@ -324,7 +327,8 @@ class ThreadsAutoPoster {
                     <tr>
                         <th scope="row">X API Key (Consumer Key)</th>
                         <td>
-                            <input type="text" name="x_api_key" value="<?php echo esc_attr(get_option('x_api_key')); ?>" class="regular-text" />
+                            <input type="password" name="x_api_key" value="<?php echo esc_attr(get_option('x_api_key')); ?>" class="regular-text" />
+                            <button type="button" class="button button-small threads-toggle-visibility">Show</button>
                             <p class="description">Your X API Key from <a href="https://developer.twitter.com/en/portal/projects-and-apps" target="_blank">X Developer Portal</a>.</p>
                         </td>
                     </tr>
@@ -332,6 +336,7 @@ class ThreadsAutoPoster {
                         <th scope="row">X API Secret (Consumer Secret)</th>
                         <td>
                             <input type="password" name="x_api_secret" value="<?php echo esc_attr(get_option('x_api_secret')); ?>" class="regular-text" />
+                            <button type="button" class="button button-small threads-toggle-visibility">Show</button>
                             <p class="description">Your X API Secret from X Developer Portal.</p>
                         </td>
                     </tr>
@@ -393,6 +398,21 @@ class ThreadsAutoPoster {
             <h2>Manage Posts</h2>
             <p>To post or re-post content to Threads and/or X, go to the <a href="<?php echo admin_url('edit.php'); ?>">All Posts</a> page. You can use the bulk actions dropdown to post multiple posts at once to either or both platforms.</p>
         </div>
+        <script>
+        jQuery(document).ready(function($) {
+            $(document).on('click', '.threads-toggle-visibility', function() {
+                var $btn = $(this);
+                var $input = $btn.prev('input');
+                if ($input.attr('type') === 'password') {
+                    $input.attr('type', 'text');
+                    $btn.text('Hide');
+                } else {
+                    $input.attr('type', 'password');
+                    $btn.text('Show');
+                }
+            });
+        });
+        </script>
         <?php
     }
     
