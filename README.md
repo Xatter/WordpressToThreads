@@ -31,7 +31,7 @@ A WordPress plugin that automatically posts your blog posts to Threads with smar
 
 ### Step 1: Create a Threads App
 
-[![Meta App Setup Video](https://img.youtube.com/vi/-pRZlsxzGQo/maxresdefault.jpg)](https://youtu.be/-pRZlsxzGQo)
+[▶ Watch the Meta App setup walkthrough video](https://youtu.be/-pRZlsxzGQo)
 
 1. Go to [Meta for Developers](https://developers.facebook.com/)
 2. Click "My Apps" and create a new app
