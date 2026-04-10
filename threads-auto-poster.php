@@ -89,6 +89,7 @@ class ThreadsAutoPoster {
         add_option('threads_media_priority', 'featured');
         add_option('threads_token_expires', '');
         add_option('threads_enable_thread_chains', '1');
+        add_option('threads_attribution_reply_enabled', '1');
         add_option('threads_max_chain_length', '5');
         add_option('threads_split_preference', 'sentences');
 
@@ -169,6 +170,7 @@ class ThreadsAutoPoster {
         register_setting('wordpress_to_threads_settings', 'threads_enable_thread_chains');
         register_setting('wordpress_to_threads_settings', 'threads_max_chain_length');
         register_setting('wordpress_to_threads_settings', 'threads_split_preference');
+        register_setting('wordpress_to_threads_settings', 'threads_attribution_reply_enabled');
 
         // X (Twitter) settings
         register_setting('wordpress_to_threads_settings', 'x_auto_post_enabled');
@@ -311,6 +313,13 @@ class ThreadsAutoPoster {
                                 <option value="words" <?php selected(get_option('threads_split_preference', 'sentences'), 'words'); ?>>Split at word boundaries</option>
                             </select>
                             <p class="description">How to intelligently split long content into thread posts.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Add Attribution Reply</th>
+                        <td>
+                            <input type="checkbox" name="threads_attribution_reply_enabled" value="1" <?php checked(get_option('threads_attribution_reply_enabled', '1'), '1'); ?> />
+                            <p class="description">Append a final reply to every thread crediting the original blog post and linking to the WordpressToThreads plugin.</p>
                         </td>
                     </tr>
                 </table>
@@ -668,6 +677,12 @@ class ThreadsAutoPoster {
         error_log('WordPress to Threads: Post published successfully. ID: ' . $publish_response['id']);
         update_post_meta($post->ID, '_threads_posted', '1');
         update_post_meta($post->ID, '_threads_post_id', $publish_response['id']);
+
+        // Add attribution reply
+        if (get_option('threads_attribution_reply_enabled', '1') === '1') {
+            $this->post_attribution_reply($post, $publish_response['id'], $user_id, $access_token);
+        }
+
         return true;
     }
     
@@ -821,6 +836,31 @@ class ThreadsAutoPoster {
         return false; // No good split point found
     }
     
+    private function post_attribution_reply($post, $reply_to_id, $user_id, $access_token) {
+        $post_url = get_permalink($post->ID);
+        $attribution_text = "Originally published on my blog: " . $post_url . "\nPublished by WordpressToThreads https://github.com/Xatter/WordpressToThreads";
+
+        $reply_data = array(
+            'media_type' => 'TEXT',
+            'text'       => $attribution_text,
+            'reply_to_id' => $reply_to_id,
+        );
+
+        $container_response = $this->create_threads_container($user_id, $reply_data, $access_token);
+        if (!$container_response || !isset($container_response['id'])) {
+            error_log('WordPress to Threads: Failed to create attribution reply container.');
+            return;
+        }
+
+        $publish_response = $this->publish_threads_container($user_id, $container_response['id'], $access_token);
+        if (!$publish_response || !isset($publish_response['id'])) {
+            error_log('WordPress to Threads: Failed to publish attribution reply.');
+            return;
+        }
+
+        error_log('WordPress to Threads: Attribution reply published. ID: ' . $publish_response['id']);
+    }
+
     private function create_thread_chain($post) {
         $user_id = get_option('threads_user_id');
         
@@ -907,12 +947,18 @@ class ThreadsAutoPoster {
             }
         }
         
+        // Add attribution reply to the last post in the chain
+        if (get_option('threads_attribution_reply_enabled', '1') === '1') {
+            sleep(3);
+            $this->post_attribution_reply($post, $previous_post_id, $user_id, $access_token);
+        }
+
         // Store thread chain information in post meta
         update_post_meta($post->ID, '_threads_posted', '1');
         update_post_meta($post->ID, '_threads_post_id', $thread_post_ids[0]); // Main post ID
         update_post_meta($post->ID, '_threads_chain_ids', $thread_post_ids); // All post IDs
         update_post_meta($post->ID, '_threads_chain_count', count($thread_post_ids));
-        
+
         error_log('WordPress to Threads: Sequential thread chain created successfully with ' . count($thread_post_ids) . ' posts');
         return true;
     }
@@ -2491,6 +2537,7 @@ class ThreadsAutoPoster {
                 update_option('threads_enable_thread_chains', sanitize_text_field($_POST['threads_enable_thread_chains']) === '1' ? '1' : '0');
                 update_option('threads_max_chain_length', intval($_POST['threads_max_chain_length']));
                 update_option('threads_split_preference', sanitize_text_field($_POST['threads_split_preference']));
+                update_option('threads_attribution_reply_enabled', sanitize_text_field($_POST['threads_attribution_reply_enabled']) === '1' ? '1' : '0');
                 wp_send_json_success();
                 break;
 
