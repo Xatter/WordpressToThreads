@@ -696,8 +696,21 @@ class ThreadsAutoPoster {
             return $full_text;
         }
 
+        $attribution_enabled = get_option('threads_attribution_reply_enabled', '1') === '1';
+
+        if ($attribution_enabled) {
+            // Attribution reply will provide the link — just truncate with "..."
+            $available_chars = $this->threads_character_limit - 3;
+            if (strlen($title) + 2 < $available_chars) {
+                $remaining_chars = $available_chars - strlen($title) - 2;
+                return $title . "\n\n" . substr($content, 0, $remaining_chars) . '...';
+            } else {
+                return substr($title, 0, $available_chars) . '...';
+            }
+        }
+
         $url_to_use = $this->get_post_url($post->ID);
-        
+
         $available_chars = $this->threads_character_limit - strlen($url_to_use) - 2;
 
         if (strlen($title) + 2 < $available_chars) {
@@ -717,14 +730,16 @@ class ThreadsAutoPoster {
         $max_chain_length = (int) get_option('threads_max_chain_length', 5);
 
         $url_to_use = $this->get_post_url($post->ID);
-        
+        $attribution_enabled = get_option('threads_attribution_reply_enabled', '1') === '1';
+
         // Full text with title and content
         $full_text = $title . "\n\n" . $content;
-        
+
         // Calculate available characters for content (reserve space for URL at the end and thread indicators)
-        // Use the longer truncation suffix "... More: <url>" to ensure we stay under limit
-        $url_space = strlen('... More: ' . $url_to_use);
-        $available_chars_last_post = $this->threads_character_limit - $url_space;
+        // When attribution reply is enabled, no URL needed on the last post so no space reservation required.
+        $available_chars_last_post = $attribution_enabled
+            ? $this->threads_character_limit
+            : $this->threads_character_limit - strlen('... More: ' . $url_to_use);
         $available_chars_regular = $this->threads_character_limit;
         
         // Reserve space for thread indicator on first post (only used when multiple posts)
@@ -748,7 +763,7 @@ class ThreadsAutoPoster {
             if (strlen($remaining_text) <= $char_limit) {
                 // Remaining text fits in this part
                 $part_text = $remaining_text;
-                if ($is_last_part || $part_count == 1) {
+                if (!$attribution_enabled && ($is_last_part || $part_count == 1)) {
                     $part_text .= "\n\n" . $url_to_use;
                 }
                 $thread_parts[] = $part_text;
@@ -766,8 +781,8 @@ class ThreadsAutoPoster {
                 $part_text = substr($remaining_text, 0, $split_point);
             }
             
-            // Add URL to the last part only
-            if ($is_last_part) {
+            // Add URL to the last part only (when attribution reply is disabled)
+            if ($is_last_part && !$attribution_enabled) {
                 // We're at max chain length and truncating content - use "... More: " format
                 $part_text = rtrim($part_text);
                 if (substr($part_text, -3) !== '...') {
@@ -780,8 +795,8 @@ class ThreadsAutoPoster {
             $remaining_text = trim(substr($remaining_text, $split_point));
         }
         
-        // If we still have remaining text and hit the max chain length, append URL to last part
-        if (!empty($remaining_text) && strpos(end($thread_parts), $url_to_use) === false) {
+        // If we still have remaining text and hit the max chain length, append URL to last part (when attribution reply is disabled)
+        if (!empty($remaining_text) && !$attribution_enabled && strpos(end($thread_parts), $url_to_use) === false) {
             $last_part = array_pop($thread_parts);
             $last_part = rtrim($last_part);
             if (substr($last_part, -3) !== '...') {
