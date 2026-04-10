@@ -2129,9 +2129,24 @@ class ThreadsAutoPoster {
                     Save Credentials <span class="wizard-spinner spinner"></span>
                 </button>
 
+                <div class="wizard-instructions">
+                    <h3>Step D: Add yourself as a Test User</h3>
+                    <ol>
+                        <li>In your Meta App, click <strong>App Roles</strong> in the left sidebar, then click <strong>Roles</strong></li>
+                        <li>Scroll down to <strong>Test Users</strong> and click <strong>Add Instagram Test Users</strong> (this covers Threads accounts)</li>
+                        <li>Search for and add your Threads/Instagram account, then click <strong>Submit</strong></li>
+                        <li>Open the <strong>Threads</strong> app on your phone, go to <strong>Settings → Account → Website permissions</strong> (or check your notifications) and <strong>accept the pending invite</strong></li>
+                    </ol>
+
+                    <div class="wizard-callout wizard-callout-warning">
+                        <strong>You must accept the invite before authorizing!</strong>
+                        Meta requires your account to be an accepted test user before the OAuth flow will work. If you skip this step, authorization will fail with a permission error.
+                    </div>
+                </div>
+
                 <div class="wizard-auth-actions">
                     <div class="wizard-instructions">
-                        <h3>Step D: Authorize</h3>
+                        <h3>Step E: Authorize</h3>
                         <p>Click the button below to authorize this plugin with your Threads account. You'll be redirected to Threads and then back here.</p>
                     </div>
 

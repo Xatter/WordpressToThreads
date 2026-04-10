@@ -58,13 +58,24 @@ The setup wizard walks you through everything with screenshots, but here's a sum
 
 Replace `yourdomain.com` with your actual domain.
 
-### Step 3: Enter Credentials and Authorize
+### Step 3: Add Yourself as a Test User
+
+Before you can authorize, your Threads/Instagram account must be added as a test user on your Meta App and the invite must be accepted:
+
+1. In your Meta App, click **App Roles** in the left sidebar, then click **Roles**
+2. Scroll to **Test Users** and click **Add Instagram Test Users**
+3. Search for and add your Threads/Instagram account, then click **Submit**
+4. Open the **Threads** app, go to **Settings → Account → Website permissions** (or check your notifications) and **accept the pending invite**
+
+> **Important:** You must accept the invite before attempting authorization. If you skip this step, the OAuth flow will fail with a permission error.
+
+### Step 4: Enter Credentials and Authorize
 
 1. Copy your **Threads App ID** and **Threads App Secret** from the same Settings page
 2. Enter them in the plugin (via the wizard or **Settings → Threads & X**)
 3. Click **Authorize with Threads** and complete the OAuth flow
 
-### Step 4: Optional — Connect X and Bitly
+### Step 5: Optional — Connect X and Bitly
 
 - **X (Twitter):** Enter your API Key and Secret from the [X Developer Portal](https://developer.twitter.com/en/portal/projects-and-apps), then authorize
 - **Bitly:** Enter your access token from Bitly's Developer Settings for URL shortening
