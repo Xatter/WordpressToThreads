@@ -1379,21 +1379,44 @@ class ThreadsAutoPoster {
         }
 
         // Container is ready, publish it
-        error_log('WordPress to Threads: Publishing container ' . $container_id);
-        $response = $this->make_authenticated_request($api_url, $args);
+        // Retry on "Media Not Found" (error 24/4279009) - container can report FINISHED
+        // but not be fully propagated in Meta's API yet, especially for reply containers
+        $max_publish_attempts = 3;
+        $publish_retry_delay = 3;
 
-        if (!$response) {
-            error_log('WordPress to Threads: Failed to publish container - authentication failed');
-            return false;
+        for ($attempt = 1; $attempt <= $max_publish_attempts; $attempt++) {
+            error_log('WordPress to Threads: Publishing container ' . $container_id . ' (attempt ' . $attempt . ')');
+            $response = $this->make_authenticated_request($api_url, $args);
+
+            if (!$response) {
+                error_log('WordPress to Threads: Failed to publish container - authentication failed');
+                return false;
+            }
+
+            $response_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+
+            error_log('WordPress to Threads: Publish HTTP response code: ' . $response_code);
+            error_log('WordPress to Threads: Publish raw response body: ' . $body);
+
+            $result = json_decode($body, true);
+
+            // Check for "Media Not Found" error that indicates container not yet propagated
+            if ($response_code === 400
+                && isset($result['error']['code']) && $result['error']['code'] === 24
+                && isset($result['error']['error_subcode']) && $result['error']['error_subcode'] === 4279009
+                && $attempt < $max_publish_attempts
+            ) {
+                error_log('WordPress to Threads: Container not yet propagated, retrying in ' . $publish_retry_delay . 's (attempt ' . $attempt . '/' . $max_publish_attempts . ')');
+                sleep($publish_retry_delay);
+                $publish_retry_delay *= 2; // exponential backoff
+                continue;
+            }
+
+            return $result;
         }
 
-        $response_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-
-        error_log('WordPress to Threads: Publish HTTP response code: ' . $response_code);
-        error_log('WordPress to Threads: Publish raw response body: ' . $body);
-
-        return json_decode($body, true);
+        return $result;
     }
     
     
